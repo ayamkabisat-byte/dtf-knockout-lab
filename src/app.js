@@ -1,6 +1,7 @@
 import './styles.css';
 import { processImageData, processForExport, rgbToHex } from './engine.js';
 import { injectPngDpi } from './png.js';
+import { createUnderbaseImageData } from './underbase.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -12,7 +13,8 @@ const els = {
   chromaProtection: $('chromaProtection'), chromaOut: $('chromaOut'),
   lpi: $('lpi'), lpiOut: $('lpiOut'), angle: $('angle'), angleOut: $('angleOut'),
   shape: $('shape'), dpi: $('dpi'), dpiOut: $('dpiOut'),
-  resetBtn: $('resetBtn'), exportBtn: $('exportBtn'),
+  choke: $('choke'), chokeOut: $('chokeOut'),
+  resetBtn: $('resetBtn'), exportBtn: $('exportBtn'), exportUnderbaseBtn: $('exportUnderbaseBtn'),
   canvasStage: $('canvasStage'), previewCanvas: $('previewCanvas'), emptyState: $('emptyState'), status: $('status'),
 };
 
@@ -21,6 +23,7 @@ const state = {
   sourceCanvas: document.createElement('canvas'),
   sourceData: null,
   result: null,
+  underbase: null,
   view: 'garment',
   mode: 'halftone',
   picking: false,
@@ -41,8 +44,6 @@ function settings({ preview = false } = {}) {
     lpi: Number(els.lpi.value),
     angle: Number(els.angle.value),
     shape: els.shape.value,
-    // Preview pixels are downsampled from the original. Scale the effective DPI
-    // by the same factor so the on-screen halftone period matches export.
     dpi: preview ? outputDpi * state.previewScale : outputDpi,
   };
 }
@@ -69,12 +70,11 @@ function updateLabels() {
   els.lpiOut.textContent = els.lpi.value;
   els.angleOut.textContent = `${els.angle.value}°`;
   els.dpiOut.textContent = els.dpi.value;
+  els.chokeOut.textContent = `${els.choke.value}px`;
   updateFileMeta();
 }
 
 function fitProcessingSize(img) {
-  // Keep interactive preview responsive while preserving physical dot size.
-  // Full-resolution export is rendered independently up to 6000px max side.
   const maxSide = 2600;
   const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
   return {
@@ -108,6 +108,7 @@ async function loadFile(file) {
     els.previewCanvas.classList.remove('hidden');
     els.emptyState.classList.add('hidden');
     els.exportBtn.disabled = false;
+    els.exportUnderbaseBtn.disabled = false;
     render();
     URL.revokeObjectURL(url);
   };
@@ -135,6 +136,13 @@ function render() {
       state.sourceCanvas.height,
       settings({ preview: true }),
     );
+    const previewChoke = Number(els.choke.value) * state.previewScale;
+    state.underbase = createUnderbaseImageData(
+      state.result.processed,
+      state.sourceCanvas.width,
+      state.sourceCanvas.height,
+      previewChoke,
+    );
     drawCurrentView();
     const ms = Math.round(performance.now() - t0);
     els.status.textContent = `${state.sourceCanvas.width}×${state.sourceCanvas.height}px · ${ms} ms · preview matched to export scale`;
@@ -157,50 +165,95 @@ function drawCurrentView() {
 
   if (state.view === 'original') ctx.putImageData(state.result.original, 0, 0);
   else if (state.view === 'mask') ctx.putImageData(state.result.mask, 0, 0);
+  else if (state.view === 'underbase' && state.underbase) ctx.putImageData(state.underbase, 0, 0);
   else ctx.putImageData(state.result.processed, 0, 0);
   updateStage();
 }
 
+function renderFullResolution() {
+  const maxSide = 6000;
+  const scale = Math.min(1, maxSide / Math.max(state.image.naturalWidth, state.image.naturalHeight));
+  const width = Math.max(1, Math.round(state.image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(state.image.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(state.image, 0, 0, width, height);
+  const source = ctx.getImageData(0, 0, width, height);
+  const output = processForExport(source, width, height, settings());
+  return { canvas, ctx, output, width, height, scale };
+}
+
+function setExportBusy(busy, label = 'Rendering…') {
+  els.exportBtn.disabled = busy || !state.image;
+  els.exportUnderbaseBtn.disabled = busy || !state.image;
+  if (busy) {
+    els.exportBtn.textContent = label;
+    els.exportUnderbaseBtn.textContent = label;
+  } else {
+    els.exportBtn.textContent = 'Export Color PNG';
+    els.exportUnderbaseBtn.textContent = 'Export Underbase';
+  }
+}
+
+async function downloadCanvasPng(canvas, filename, dpi) {
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('PNG export failed');
+  let finalBlob = blob;
+  try {
+    finalBlob = await injectPngDpi(blob, dpi);
+  } catch (error) {
+    console.warn('Could not inject PNG DPI metadata; exporting base PNG instead.', error);
+  }
+  const url = URL.createObjectURL(finalBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1200);
+}
+
 function exportPng() {
   if (!state.result || !state.image) return;
-  els.exportBtn.disabled = true;
-  els.exportBtn.textContent = 'Rendering…';
-  els.status.textContent = 'Rendering full-resolution PNG…';
-  requestAnimationFrame(() => {
-    const maxSide = 6000;
-    const scale = Math.min(1, maxSide / Math.max(state.image.naturalWidth, state.image.naturalHeight));
-    const width = Math.max(1, Math.round(state.image.naturalWidth * scale));
-    const height = Math.max(1, Math.round(state.image.naturalHeight * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(state.image, 0, 0, width, height);
-    const source = ctx.getImageData(0, 0, width, height);
-    const output = processForExport(source, width, height, settings());
-    ctx.clearRect(0, 0, width, height);
-    ctx.putImageData(output, 0, 0);
-    canvas.toBlob(async (blob) => {
-      els.exportBtn.disabled = false;
-      els.exportBtn.textContent = 'Export PNG';
-      if (!blob) { els.status.textContent = 'PNG export failed.'; return; }
-
+  setExportBusy(true);
+  els.status.textContent = 'Rendering full-resolution color PNG…';
+  requestAnimationFrame(async () => {
+    try {
+      const { canvas, ctx, output, width, height, scale } = renderFullResolution();
+      ctx.clearRect(0, 0, width, height);
+      ctx.putImageData(output, 0, 0);
       const dpi = Number(els.dpi.value);
-      let finalBlob = blob;
-      try {
-        finalBlob = await injectPngDpi(blob, dpi);
-      } catch (error) {
-        console.warn('Could not inject PNG DPI metadata; exporting base PNG instead.', error);
-      }
+      await downloadCanvasPng(canvas, `${state.filename}-dtf-knockout.png`, dpi);
+      els.status.textContent = `Exported color ${width}×${height}px @ ${dpi} DPI${scale < 1 ? ' (6000px max side)' : ''}`;
+    } catch (error) {
+      console.error(error);
+      els.status.textContent = 'PNG export failed.';
+    } finally {
+      setExportBusy(false);
+    }
+  });
+}
 
-      const url = URL.createObjectURL(finalBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${state.filename}-dtf-knockout.png`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1200);
-      els.status.textContent = `Exported ${width}×${height}px @ ${dpi} DPI${scale < 1 ? ' (6000px max side)' : ''}`;
-    }, 'image/png');
+function exportUnderbase() {
+  if (!state.result || !state.image) return;
+  setExportBusy(true);
+  els.status.textContent = 'Rendering white-underbase PNG…';
+  requestAnimationFrame(async () => {
+    try {
+      const { canvas, ctx, output, width, height, scale } = renderFullResolution();
+      const underbase = createUnderbaseImageData(output, width, height, Number(els.choke.value));
+      ctx.clearRect(0, 0, width, height);
+      ctx.putImageData(underbase, 0, 0);
+      const dpi = Number(els.dpi.value);
+      await downloadCanvasPng(canvas, `${state.filename}-white-underbase.png`, dpi);
+      els.status.textContent = `Exported underbase ${width}×${height}px @ ${dpi} DPI · choke ${els.choke.value}px${scale < 1 ? ' (6000px max side)' : ''}`;
+    } catch (error) {
+      console.error(error);
+      els.status.textContent = 'Underbase export failed.';
+    } finally {
+      setExportBusy(false);
+    }
   });
 }
 
@@ -228,7 +281,7 @@ els.fileInput.addEventListener('change', (e) => loadFile(e.target.files?.[0]));
 }));
 els.dropZone.addEventListener('drop', (e) => loadFile(e.dataTransfer.files?.[0]));
 
-[els.knockoutColor, els.tolerance, els.strength, els.chromaProtection, els.lpi, els.angle, els.shape, els.dpi]
+[els.knockoutColor, els.tolerance, els.strength, els.chromaProtection, els.lpi, els.angle, els.shape, els.dpi, els.choke]
   .forEach((el) => el.addEventListener('input', render));
 
 els.garmentColor.addEventListener('input', () => { updateLabels(); updateStage(); });
@@ -257,6 +310,7 @@ document.querySelectorAll('.view-tab').forEach((button) => button.addEventListen
 }));
 
 els.exportBtn.addEventListener('click', exportPng);
+els.exportUnderbaseBtn.addEventListener('click', exportUnderbase);
 els.resetBtn.addEventListener('click', () => {
   els.garmentColor.value = '#111111';
   els.knockoutColor.value = '#000000';
@@ -267,6 +321,7 @@ els.resetBtn.addEventListener('click', () => {
   els.angle.value = 22.5;
   els.shape.value = 'circle';
   els.dpi.value = 300;
+  els.choke.value = 1;
   state.mode = 'halftone';
   document.querySelectorAll('.segment').forEach((b) => b.classList.toggle('active', b.dataset.mode === 'halftone'));
   render();
