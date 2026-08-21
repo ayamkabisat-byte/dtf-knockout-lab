@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#111111" />
-    <meta name="description" content="DTF Knockout Lab — edge-aware background cleanup, internal garment knockout, binary halftone and white-underbase preparation for DTF/DTG artwork." />
+    <meta name="description" content="DTF Knockout Lab — edge-aware background cleanup, refined internal garment knockout, smoother binary halftone and white-underbase preparation for DTF/DTG artwork." />
     <title>DTF Knockout Lab</title>
   </head>
   <body>
@@ -12,7 +12,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">PRINT PREP / EXPERIMENTAL</p>
-          <h1>DTF Knockout Lab <span>v0.3</span></h1>
+          <h1>DTF Knockout Lab <span>v0.3.1</span></h1>
         </div>
         <div class="topbar-actions">
           <button id="resetBtn" class="button ghost" type="button">Reset</button>
@@ -112,6 +112,11 @@
               <span><b>Chroma protection</b><output id="chromaOut">80%</output></span>
               <input id="chromaProtection" type="range" min="0" max="100" value="80" />
             </label>
+
+            <label class="slider-control">
+              <span><b>Shadow recovery</b><output id="shadowRecoveryOut">18%</output></span>
+              <input id="shadowRecovery" type="range" min="0" max="60" value="18" />
+            </label>
           </section>
 
           <section class="control-section">
@@ -119,7 +124,7 @@
               <span class="step">04</span>
               <div>
                 <h2>Halftone transition</h2>
-                <p>Binary alpha only: printed pixel or transparent pixel.</p>
+                <p>Binary alpha only: printed pixel or transparent pixel. Smooth the coverage map instead of blurring the artwork RGB.</p>
               </div>
             </div>
 
@@ -148,6 +153,16 @@
                 <option value="line">Line</option>
               </select>
             </div>
+
+            <label class="slider-control">
+              <span><b>Screen smooth</b><output id="screenSmoothOut">1.0px</output></span>
+              <input id="screenSmooth" type="range" min="0" max="20" value="10" step="1" />
+            </label>
+
+            <label class="slider-control">
+              <span><b>Transition gamma</b><output id="gammaOut">1.00</output></span>
+              <input id="transitionGamma" type="range" min="60" max="180" value="100" step="1" />
+            </label>
 
             <label class="slider-control">
               <span><b>Output DPI</b><output id="dpiOut">300</output></span>
@@ -196,7 +211,7 @@
 
           <div class="info-strip">
             <div><span>Background</span><b>Edge-connected cleanup</b></div>
-            <div><span>Knockout</span><b>OKLab + binary halftone</b></div>
+            <div><span>Knockout</span><b>OKLab + smoother halftone</b></div>
             <div><span>Underbase</span><b>Pre-halftone choke</b></div>
           </div>
         </section>
