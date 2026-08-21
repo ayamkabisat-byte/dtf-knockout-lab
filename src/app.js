@@ -1,5 +1,6 @@
 import './styles.css';
 import { processImageData, processForExport, rgbToHex } from './engine.js';
+import { injectPngDpi } from './png.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -24,10 +25,13 @@ const state = {
   mode: 'halftone',
   picking: false,
   filename: 'artwork',
+  displayFilename: '',
+  previewScale: 1,
   renderToken: 0,
 };
 
-function settings() {
+function settings({ preview = false } = {}) {
+  const outputDpi = Number(els.dpi.value);
   return {
     knockoutColor: els.knockoutColor.value,
     tolerance: Number(els.tolerance.value),
@@ -37,8 +41,23 @@ function settings() {
     lpi: Number(els.lpi.value),
     angle: Number(els.angle.value),
     shape: els.shape.value,
-    dpi: Number(els.dpi.value),
+    // Preview pixels are downsampled from the original. Scale the effective DPI
+    // by the same factor so the on-screen halftone period matches export.
+    dpi: preview ? outputDpi * state.previewScale : outputDpi,
   };
+}
+
+function updateFileMeta() {
+  if (!state.image) return;
+  const dpi = Math.max(1, Number(els.dpi.value));
+  const widthIn = state.image.naturalWidth / dpi;
+  const heightIn = state.image.naturalHeight / dpi;
+  const widthCm = widthIn * 2.54;
+  const heightCm = heightIn * 2.54;
+  const previewNote = state.previewScale < 1
+    ? ` · preview ${state.sourceCanvas.width}×${state.sourceCanvas.height}px`
+    : '';
+  els.fileMeta.textContent = `${state.displayFilename} · ${state.image.naturalWidth}×${state.image.naturalHeight}px · ${widthCm.toFixed(1)}×${heightCm.toFixed(1)} cm @ ${dpi} DPI${previewNote}`;
 }
 
 function updateLabels() {
@@ -50,11 +69,12 @@ function updateLabels() {
   els.lpiOut.textContent = els.lpi.value;
   els.angleOut.textContent = `${els.angle.value}°`;
   els.dpiOut.textContent = els.dpi.value;
+  updateFileMeta();
 }
 
 function fitProcessingSize(img) {
-  // Keep interactive preview responsive while still allowing meaningful output.
-  // v0.2 can move heavy rendering to a Web Worker/OffscreenCanvas.
+  // Keep interactive preview responsive while preserving physical dot size.
+  // Full-resolution export is rendered independently up to 6000px max side.
   const maxSide = 2600;
   const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
   return {
@@ -75,13 +95,15 @@ async function loadFile(file) {
     const { width, height, scale } = fitProcessingSize(img);
     state.image = img;
     state.filename = file.name.replace(/\.[^.]+$/, '') || 'artwork';
+    state.displayFilename = file.name;
+    state.previewScale = scale;
     state.sourceCanvas.width = width;
     state.sourceCanvas.height = height;
     const ctx = state.sourceCanvas.getContext('2d', { willReadFrequently: true });
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
     state.sourceData = ctx.getImageData(0, 0, width, height);
-    els.fileMeta.textContent = `${file.name} · ${img.naturalWidth}×${img.naturalHeight}px${scale < 1 ? ` · preview ${width}×${height}px` : ''}`;
+    updateFileMeta();
     els.fileMeta.classList.remove('hidden');
     els.previewCanvas.classList.remove('hidden');
     els.emptyState.classList.add('hidden');
@@ -111,11 +133,11 @@ function render() {
       state.sourceData,
       state.sourceCanvas.width,
       state.sourceCanvas.height,
-      settings(),
+      settings({ preview: true }),
     );
     drawCurrentView();
     const ms = Math.round(performance.now() - t0);
-    els.status.textContent = `${state.sourceCanvas.width}×${state.sourceCanvas.height}px · ${ms} ms`;
+    els.status.textContent = `${state.sourceCanvas.width}×${state.sourceCanvas.height}px · ${ms} ms · preview matched to export scale`;
   });
 }
 
@@ -158,17 +180,26 @@ function exportPng() {
     const output = processForExport(source, width, height, settings());
     ctx.clearRect(0, 0, width, height);
     ctx.putImageData(output, 0, 0);
-    canvas.toBlob((blob) => {
+    canvas.toBlob(async (blob) => {
       els.exportBtn.disabled = false;
       els.exportBtn.textContent = 'Export PNG';
       if (!blob) { els.status.textContent = 'PNG export failed.'; return; }
-      const url = URL.createObjectURL(blob);
+
+      const dpi = Number(els.dpi.value);
+      let finalBlob = blob;
+      try {
+        finalBlob = await injectPngDpi(blob, dpi);
+      } catch (error) {
+        console.warn('Could not inject PNG DPI metadata; exporting base PNG instead.', error);
+      }
+
+      const url = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${state.filename}-dtf-knockout.png`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1200);
-      els.status.textContent = `Exported ${width}×${height}px${scale < 1 ? ' (6000px max side)' : ''}`;
+      els.status.textContent = `Exported ${width}×${height}px @ ${dpi} DPI${scale < 1 ? ' (6000px max side)' : ''}`;
     }, 'image/png');
   });
 }
