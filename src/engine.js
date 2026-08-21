@@ -81,8 +81,8 @@ function makeRasterizer(settings) {
 
   return (coverage, x, y) => {
     if (mode === 'hard') return coverage >= 0.5;
-    if (coverage <= 0.002) return false;
-    if (coverage >= 0.998) return true;
+    if (coverage <= 0.01) return false;
+    if (coverage >= 0.995) return true;
     return coverage >= patternThreshold(x, y, period, angle, shape);
   };
 }
@@ -90,7 +90,7 @@ function makeRasterizer(settings) {
 function makeInternalProcessor(settings) {
   const {
     knockoutColor = '#000000', internalTolerance = 34,
-    strength = 100, chromaProtection = 80,
+    strength = 100, chromaProtection = 80, shadowRecovery = 18,
   } = settings;
 
   const targetRgb = hexToRgb(knockoutColor);
@@ -99,6 +99,7 @@ function makeInternalProcessor(settings) {
   const featherStart = radius * 0.28;
   const strengthN = clamp(strength / 100);
   const chromaN = clamp(chromaProtection / 100);
+  const shadowN = clamp(shadowRecovery / 100);
   const targetNeutrality = 1 - clamp(targetLab.C / 0.14);
 
   return (r, g, b, sourceAlpha) => {
@@ -108,16 +109,17 @@ function makeInternalProcessor(settings) {
     const distance = colorDistance(lab, targetLab);
     let match = 1 - smoothstep(featherStart, radius, distance);
 
-    // Protect strongly chromatic dark colors (navy, burgundy, dark green, etc.)
-    // when the selected knockout target is neutral/near-black.
     const excessChroma = clamp((lab.C - targetLab.C - 0.012) / 0.16);
     match *= 1 - excessChroma * targetNeutrality * chromaN;
     match = clamp(match * strengthN);
 
-    // Preserve source alpha as continuous coverage, then convert to binary only
-    // at the final rasterization stage.
     const sourceOpacity = sourceAlpha / 255;
-    const coverage = clamp((1 - match) * sourceOpacity);
+    let coverage = clamp((1 - match) * sourceOpacity);
+
+    const darkness = clamp((0.72 - lab.L) / 0.72);
+    const recovery = excessChroma * darkness * shadowN * 0.65;
+    if (recovery > 0) coverage = clamp(coverage + (1 - coverage) * recovery);
+
     return { coverage, match };
   };
 }
@@ -185,8 +187,6 @@ function candidateSupport(states, width, height, index) {
     for (let dx = -1; dx <= 1; dx++) {
       const xx = x + dx;
       if (xx < 0 || xx >= width) continue;
-      // 1 = candidate, 2 = connected background, 3 = rejected thin bridge.
-      // All non-zero values were originally background-color candidates.
       if (states[row + xx] !== 0) count++;
     }
   }
@@ -209,7 +209,6 @@ function buildEdgeConnectedBackground(source, width, height, settings) {
   const radius = toleranceRadius(backgroundTolerance, true);
   const data = source.data;
 
-  // Pass 1: color candidate map.
   for (let p = 0, i = 0; p < total; p++, i += 4) {
     const alpha = data[i + 3];
     if (alpha <= 8) {
@@ -220,8 +219,6 @@ function buildEdgeConnectedBackground(source, width, height, settings) {
     if (colorDistance(lab, targetLab) <= radius) states[p] = 1;
   }
 
-  // Pass 2: flood only from canvas edges. A 3x3 neighborhood-consensus check
-  // blocks many thin dark outlines from becoming bridges into internal artwork.
   const queue = new Int32Array(total);
   let head = 0;
   let tail = 0;
@@ -243,8 +240,6 @@ function buildEdgeConnectedBackground(source, width, height, settings) {
 
   const tryExpand = (p) => {
     if (states[p] !== 1) return;
-    // Require a local majority of background-color candidates. This still
-    // follows broad/soft backgrounds but resists narrow black line art.
     if (candidateSupport(states, width, height, p) < 5) {
       states[p] = 3;
       return;
@@ -266,27 +261,90 @@ function buildEdgeConnectedBackground(source, width, height, settings) {
   return states;
 }
 
+function blurHorizontal(input, width, height, radius) {
+  if (radius <= 0) return Float32Array.from(input);
+  const output = new Float32Array(input.length);
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    let sum = 0;
+    for (let i = -radius; i <= radius; i++) {
+      const x = Math.min(width - 1, Math.max(0, i));
+      sum += input[row + x];
+    }
+    output[row] = sum / (radius * 2 + 1);
+    for (let x = 1; x < width; x++) {
+      const addX = Math.min(width - 1, x + radius);
+      const subX = Math.max(0, x - radius - 1);
+      sum += input[row + addX] - input[row + subX];
+      output[row + x] = sum / (radius * 2 + 1);
+    }
+  }
+  return output;
+}
+
+function blurVertical(input, width, height, radius) {
+  if (radius <= 0) return Float32Array.from(input);
+  const output = new Float32Array(input.length);
+  for (let x = 0; x < width; x++) {
+    let sum = 0;
+    for (let i = -radius; i <= radius; i++) {
+      const y = Math.min(height - 1, Math.max(0, i));
+      sum += input[y * width + x];
+    }
+    output[x] = sum / (radius * 2 + 1);
+    for (let y = 1; y < height; y++) {
+      const addY = Math.min(height - 1, y + radius);
+      const subY = Math.max(0, y - radius - 1);
+      sum += input[addY * width + x] - input[subY * width + x];
+      output[y * width + x] = sum / (radius * 2 + 1);
+    }
+  }
+  return output;
+}
+
+function refineCoverageMap(coverage, width, height, settings) {
+  const smoothPx = Math.max(0, Number(settings.screenSmooth) || 0);
+  const gamma = clamp(Number(settings.transitionGamma) || 1, 0.35, 2.5);
+  let refined = coverage;
+
+  const radius = Math.max(0, Math.round(smoothPx));
+  if (radius > 0) {
+    refined = blurVertical(blurHorizontal(refined, width, height, radius), width, height, radius);
+  }
+
+  const output = new Uint8Array(coverage.length);
+  for (let p = 0; p < output.length; p++) {
+    let c = clamp((refined[p] || 0) / 255);
+    if (gamma !== 1) c = Math.pow(c, 1 / gamma);
+    if (c < 0.025) c = 0;
+    else if (c > 0.985) c = 1;
+    output[p] = Math.round(c * 255);
+  }
+  return output;
+}
+
 function processCoverage(source, width, height, settings) {
   const total = width * height;
   const data = source.data;
   const background = buildEdgeConnectedBackground(source, width, height, settings);
   const processInternal = makeInternalProcessor(settings);
-  const coverage = new Uint8Array(total);
+  const rawCoverage = new Uint8Array(total);
   const internalMatch = new Uint8Array(total);
 
   for (let p = 0, i = 0; p < total; p++, i += 4) {
     if (background[p] === 2 || data[i + 3] === 0) {
-      coverage[p] = 0;
+      rawCoverage[p] = 0;
       internalMatch[p] = 0;
       continue;
     }
 
     const result = processInternal(data[i], data[i + 1], data[i + 2], data[i + 3]);
-    coverage[p] = Math.round(result.coverage * 255);
+    rawCoverage[p] = Math.round(result.coverage * 255);
     internalMatch[p] = Math.round(result.match * 255);
   }
 
-  return { coverage, internalMatch, background };
+  const coverage = refineCoverageMap(rawCoverage, width, height, settings);
+  return { coverage, rawCoverage, internalMatch, background };
 }
 
 function renderColorFromCoverage(source, coverage, width, height, settings) {
@@ -329,7 +387,7 @@ export function rasterizeCoverageMask(coverage, width, height, settings) {
 
 export function processImageData(source, width, height, settings) {
   const total = width * height;
-  const { coverage, internalMatch, background } = processCoverage(source, width, height, settings);
+  const { coverage, rawCoverage, internalMatch, background } = processCoverage(source, width, height, settings);
   const processed = renderColorFromCoverage(source, coverage, width, height, settings);
   const mask = new Uint8ClampedArray(total * 4);
   const knockoutMap = new Uint8ClampedArray(total * 4);
@@ -356,7 +414,7 @@ export function processImageData(source, width, height, settings) {
     backgroundMap[i + 2] = bg;
     backgroundMap[i + 3] = 255;
 
-    const cov = coverage[p];
+    const cov = coverage[p] || rawCoverage[p];
     coverageMap[i] = cov;
     coverageMap[i + 1] = cov;
     coverageMap[i + 2] = cov;
