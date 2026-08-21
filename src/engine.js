@@ -71,7 +71,10 @@ function makeProcessor(settings) {
   const featherStart = radius * 0.28;
   const strengthN = strength / 100;
   const chromaN = chromaProtection / 100;
-  const period = Math.max(2.25, dpi / Math.max(1, lpi));
+  // Preview rendering may use an effective DPI below the output DPI after
+  // downsampling. Allow periods down to one preview pixel so its physical dot
+  // spacing remains proportional to the full-resolution export.
+  const period = Math.max(1, dpi / Math.max(1, lpi));
   const targetNeutrality = 1 - clamp(targetLab.C / 0.14);
 
   return (r, g, b, sourceAlpha, x, y) => {
