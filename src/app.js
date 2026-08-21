@@ -20,8 +20,11 @@ const els = {
   internalTolerance: $('internalTolerance'), internalToleranceOut: $('internalToleranceOut'),
   strength: $('strength'), strengthOut: $('strengthOut'),
   chromaProtection: $('chromaProtection'), chromaOut: $('chromaOut'),
+  shadowRecovery: $('shadowRecovery'), shadowRecoveryOut: $('shadowRecoveryOut'),
   lpi: $('lpi'), lpiOut: $('lpiOut'), angle: $('angle'), angleOut: $('angleOut'),
-  shape: $('shape'), dpi: $('dpi'), dpiOut: $('dpiOut'),
+  shape: $('shape'), screenSmooth: $('screenSmooth'), screenSmoothOut: $('screenSmoothOut'),
+  transitionGamma: $('transitionGamma'), gammaOut: $('gammaOut'),
+  dpi: $('dpi'), dpiOut: $('dpiOut'),
   choke: $('choke'), chokeOut: $('chokeOut'),
   resetBtn: $('resetBtn'), exportBtn: $('exportBtn'), exportUnderbaseBtn: $('exportUnderbaseBtn'),
   canvasStage: $('canvasStage'), previewCanvas: $('previewCanvas'), emptyState: $('emptyState'), status: $('status'),
@@ -52,10 +55,13 @@ function settings({ preview = false } = {}) {
     internalTolerance: Number(els.internalTolerance.value),
     strength: Number(els.strength.value),
     chromaProtection: Number(els.chromaProtection.value),
+    shadowRecovery: Number(els.shadowRecovery.value),
     mode: state.mode,
     lpi: Number(els.lpi.value),
     angle: Number(els.angle.value),
     shape: els.shape.value,
+    screenSmooth: Number(els.screenSmooth.value) / 10,
+    transitionGamma: Number(els.transitionGamma.value) / 100,
     dpi: preview ? outputDpi * state.previewScale : outputDpi,
   };
 }
@@ -79,8 +85,11 @@ function updateLabels() {
   els.internalToleranceOut.textContent = els.internalTolerance.value;
   els.strengthOut.textContent = `${els.strength.value}%`;
   els.chromaOut.textContent = `${els.chromaProtection.value}%`;
+  els.shadowRecoveryOut.textContent = `${els.shadowRecovery.value}%`;
   els.lpiOut.textContent = els.lpi.value;
   els.angleOut.textContent = `${els.angle.value}°`;
+  els.screenSmoothOut.textContent = `${(Number(els.screenSmooth.value) / 10).toFixed(1)}px`;
+  els.gammaOut.textContent = (Number(els.transitionGamma.value) / 100).toFixed(2);
   els.dpiOut.textContent = els.dpi.value;
   els.chokeOut.textContent = `${els.choke.value}px`;
   updateFileMeta();
@@ -154,7 +163,7 @@ function render() {
   }
 
   const token = ++state.renderToken;
-  els.status.textContent = 'Processing edge cleanup + knockout…';
+  els.status.textContent = 'Refining background cleanup + halftone…';
   requestAnimationFrame(() => {
     if (token !== state.renderToken) return;
     const t0 = performance.now();
@@ -177,7 +186,7 @@ function render() {
 
     drawCurrentView();
     const ms = Math.round(performance.now() - t0);
-    els.status.textContent = `${state.sourceCanvas.width}×${state.sourceCanvas.height}px · ${ms} ms · BG ${els.backgroundColor.value.toUpperCase()}`;
+    els.status.textContent = `${state.sourceCanvas.width}×${state.sourceCanvas.height}px · ${ms} ms · smooth ${(Number(els.screenSmooth.value) / 10).toFixed(1)}px · γ ${(Number(els.transitionGamma.value) / 100).toFixed(2)}`;
   });
 }
 
@@ -262,7 +271,7 @@ function exportPng() {
       ctx.clearRect(0, 0, width, height);
       ctx.putImageData(output, 0, 0);
       const dpi = Number(els.dpi.value);
-      await downloadCanvasPng(canvas, `${state.filename}-dtf-knockout-v03.png`, dpi);
+      await downloadCanvasPng(canvas, `${state.filename}-dtf-knockout-v031.png`, dpi);
       els.status.textContent = `Exported color ${width}×${height}px @ ${dpi} DPI${scale < 1 ? ' (6000px max side)' : ''}`;
     } catch (error) {
       console.error(error);
@@ -292,7 +301,7 @@ function exportUnderbase() {
       ctx.clearRect(0, 0, width, height);
       ctx.putImageData(underbase, 0, 0);
       const dpi = Number(els.dpi.value);
-      await downloadCanvasPng(canvas, `${state.filename}-white-underbase-v03.png`, dpi);
+      await downloadCanvasPng(canvas, `${state.filename}-white-underbase-v031.png`, dpi);
       els.status.textContent = `Exported underbase ${width}×${height}px @ ${dpi} DPI · pre-halftone choke ${els.choke.value}px${scale < 1 ? ' (6000px max side)' : ''}`;
     } catch (error) {
       console.error(error);
@@ -340,9 +349,12 @@ els.dropZone.addEventListener('drop', (e) => loadFile(e.dataTransfer.files?.[0])
   els.internalTolerance,
   els.strength,
   els.chromaProtection,
+  els.shadowRecovery,
   els.lpi,
   els.angle,
   els.shape,
+  els.screenSmooth,
+  els.transitionGamma,
   els.dpi,
   els.choke,
 ].forEach((el) => el.addEventListener('input', render));
@@ -353,7 +365,6 @@ els.autoEdgeSample.addEventListener('change', () => {
   render();
 });
 els.backgroundColor.addEventListener('input', () => {
-  // Manual color selection takes ownership from auto-sampling until re-enabled.
   els.autoEdgeSample.checked = false;
   render();
 });
@@ -400,9 +411,12 @@ els.resetBtn.addEventListener('click', () => {
   els.internalTolerance.value = 34;
   els.strength.value = 100;
   els.chromaProtection.value = 80;
+  els.shadowRecovery.value = 18;
   els.lpi.value = 35;
   els.angle.value = 22.5;
   els.shape.value = 'circle';
+  els.screenSmooth.value = 10;
+  els.transitionGamma.value = 100;
   els.dpi.value = 300;
   els.choke.value = 1;
   state.mode = 'halftone';
