@@ -1,5 +1,11 @@
 import './styles.css';
-import { processImageData, processForExport, rgbToHex } from './engine.js';
+import {
+  processImageData,
+  processForExport,
+  processCoverageForExport,
+  rgbToHex,
+  sampleEdgeBackgroundColor,
+} from './engine.js';
 import { injectPngDpi } from './png.js';
 import { createUnderbaseImageData } from './underbase.js';
 
@@ -7,8 +13,11 @@ const $ = (id) => document.getElementById(id);
 const els = {
   fileInput: $('fileInput'), dropZone: $('dropZone'), fileMeta: $('fileMeta'),
   garmentColor: $('garmentColor'), garmentHex: $('garmentHex'),
+  backgroundCleanup: $('backgroundCleanup'), autoEdgeSample: $('autoEdgeSample'),
+  backgroundColor: $('backgroundColor'), backgroundHex: $('backgroundHex'),
+  backgroundTolerance: $('backgroundTolerance'), backgroundToleranceOut: $('backgroundToleranceOut'),
   knockoutColor: $('knockoutColor'), knockoutHex: $('knockoutHex'), eyedropperBtn: $('eyedropperBtn'),
-  tolerance: $('tolerance'), toleranceOut: $('toleranceOut'),
+  internalTolerance: $('internalTolerance'), internalToleranceOut: $('internalToleranceOut'),
   strength: $('strength'), strengthOut: $('strengthOut'),
   chromaProtection: $('chromaProtection'), chromaOut: $('chromaOut'),
   lpi: $('lpi'), lpiOut: $('lpiOut'), angle: $('angle'), angleOut: $('angleOut'),
@@ -36,8 +45,11 @@ const state = {
 function settings({ preview = false } = {}) {
   const outputDpi = Number(els.dpi.value);
   return {
+    backgroundCleanup: els.backgroundCleanup.checked,
+    backgroundColor: els.backgroundColor.value,
+    backgroundTolerance: Number(els.backgroundTolerance.value),
     knockoutColor: els.knockoutColor.value,
-    tolerance: Number(els.tolerance.value),
+    internalTolerance: Number(els.internalTolerance.value),
     strength: Number(els.strength.value),
     chromaProtection: Number(els.chromaProtection.value),
     mode: state.mode,
@@ -51,10 +63,8 @@ function settings({ preview = false } = {}) {
 function updateFileMeta() {
   if (!state.image) return;
   const dpi = Math.max(1, Number(els.dpi.value));
-  const widthIn = state.image.naturalWidth / dpi;
-  const heightIn = state.image.naturalHeight / dpi;
-  const widthCm = widthIn * 2.54;
-  const heightCm = heightIn * 2.54;
+  const widthCm = (state.image.naturalWidth / dpi) * 2.54;
+  const heightCm = (state.image.naturalHeight / dpi) * 2.54;
   const previewNote = state.previewScale < 1
     ? ` · preview ${state.sourceCanvas.width}×${state.sourceCanvas.height}px`
     : '';
@@ -63,8 +73,10 @@ function updateFileMeta() {
 
 function updateLabels() {
   els.garmentHex.textContent = els.garmentColor.value.toUpperCase();
+  els.backgroundHex.textContent = els.backgroundColor.value.toUpperCase();
+  els.backgroundToleranceOut.textContent = els.backgroundTolerance.value;
   els.knockoutHex.textContent = els.knockoutColor.value.toUpperCase();
-  els.toleranceOut.textContent = els.tolerance.value;
+  els.internalToleranceOut.textContent = els.internalTolerance.value;
   els.strengthOut.textContent = `${els.strength.value}%`;
   els.chromaOut.textContent = `${els.chromaProtection.value}%`;
   els.lpiOut.textContent = els.lpi.value;
@@ -84,11 +96,22 @@ function fitProcessingSize(img) {
   };
 }
 
+function sampleBackgroundFromCurrentImage() {
+  if (!state.sourceData || !els.autoEdgeSample.checked) return;
+  els.backgroundColor.value = sampleEdgeBackgroundColor(
+    state.sourceData,
+    state.sourceCanvas.width,
+    state.sourceCanvas.height,
+  );
+  updateLabels();
+}
+
 async function loadFile(file) {
   if (!file || !/^image\/(png|jpeg|webp)$/.test(file.type)) {
     els.status.textContent = 'Unsupported file. Use PNG, JPG, or WEBP.';
     return;
   }
+
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => {
@@ -99,10 +122,13 @@ async function loadFile(file) {
     state.previewScale = scale;
     state.sourceCanvas.width = width;
     state.sourceCanvas.height = height;
+
     const ctx = state.sourceCanvas.getContext('2d', { willReadFrequently: true });
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
     state.sourceData = ctx.getImageData(0, 0, width, height);
+
+    sampleBackgroundFromCurrentImage();
     updateFileMeta();
     els.fileMeta.classList.remove('hidden');
     els.previewCanvas.classList.remove('hidden');
@@ -112,6 +138,7 @@ async function loadFile(file) {
     render();
     URL.revokeObjectURL(url);
   };
+
   img.onerror = () => {
     els.status.textContent = 'Could not decode image.';
     URL.revokeObjectURL(url);
@@ -125,27 +152,32 @@ function render() {
     updateStage();
     return;
   }
+
   const token = ++state.renderToken;
-  els.status.textContent = 'Processing…';
+  els.status.textContent = 'Processing edge cleanup + knockout…';
   requestAnimationFrame(() => {
     if (token !== state.renderToken) return;
     const t0 = performance.now();
+
     state.result = processImageData(
       state.sourceData,
       state.sourceCanvas.width,
       state.sourceCanvas.height,
       settings({ preview: true }),
     );
+
     const previewChoke = Number(els.choke.value) * state.previewScale;
     state.underbase = createUnderbaseImageData(
-      state.result.processed,
+      state.result.coverage,
       state.sourceCanvas.width,
       state.sourceCanvas.height,
       previewChoke,
+      settings({ preview: true }),
     );
+
     drawCurrentView();
     const ms = Math.round(performance.now() - t0);
-    els.status.textContent = `${state.sourceCanvas.width}×${state.sourceCanvas.height}px · ${ms} ms · preview matched to export scale`;
+    els.status.textContent = `${state.sourceCanvas.width}×${state.sourceCanvas.height}px · ${ms} ms · BG ${els.backgroundColor.value.toUpperCase()}`;
   });
 }
 
@@ -164,13 +196,16 @@ function drawCurrentView() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (state.view === 'original') ctx.putImageData(state.result.original, 0, 0);
+  else if (state.view === 'background') ctx.putImageData(state.result.backgroundMap, 0, 0);
+  else if (state.view === 'knockout') ctx.putImageData(state.result.knockoutMap, 0, 0);
   else if (state.view === 'mask') ctx.putImageData(state.result.mask, 0, 0);
   else if (state.view === 'underbase' && state.underbase) ctx.putImageData(state.underbase, 0, 0);
   else ctx.putImageData(state.result.processed, 0, 0);
+
   updateStage();
 }
 
-function renderFullResolution() {
+function renderExportSource() {
   const maxSide = 6000;
   const scale = Math.min(1, maxSide / Math.max(state.image.naturalWidth, state.image.naturalHeight));
   const width = Math.max(1, Math.round(state.image.naturalWidth * scale));
@@ -181,8 +216,7 @@ function renderFullResolution() {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(state.image, 0, 0, width, height);
   const source = ctx.getImageData(0, 0, width, height);
-  const output = processForExport(source, width, height, settings());
-  return { canvas, ctx, output, width, height, scale };
+  return { canvas, ctx, source, width, height, scale };
 }
 
 function setExportBusy(busy, label = 'Rendering…') {
@@ -200,12 +234,14 @@ function setExportBusy(busy, label = 'Rendering…') {
 async function downloadCanvasPng(canvas, filename, dpi) {
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('PNG export failed');
+
   let finalBlob = blob;
   try {
     finalBlob = await injectPngDpi(blob, dpi);
   } catch (error) {
     console.warn('Could not inject PNG DPI metadata; exporting base PNG instead.', error);
   }
+
   const url = URL.createObjectURL(finalBlob);
   const a = document.createElement('a');
   a.href = url;
@@ -218,13 +254,15 @@ function exportPng() {
   if (!state.result || !state.image) return;
   setExportBusy(true);
   els.status.textContent = 'Rendering full-resolution color PNG…';
+
   requestAnimationFrame(async () => {
     try {
-      const { canvas, ctx, output, width, height, scale } = renderFullResolution();
+      const { canvas, ctx, source, width, height, scale } = renderExportSource();
+      const output = processForExport(source, width, height, settings());
       ctx.clearRect(0, 0, width, height);
       ctx.putImageData(output, 0, 0);
       const dpi = Number(els.dpi.value);
-      await downloadCanvasPng(canvas, `${state.filename}-dtf-knockout.png`, dpi);
+      await downloadCanvasPng(canvas, `${state.filename}-dtf-knockout-v03.png`, dpi);
       els.status.textContent = `Exported color ${width}×${height}px @ ${dpi} DPI${scale < 1 ? ' (6000px max side)' : ''}`;
     } catch (error) {
       console.error(error);
@@ -238,16 +276,24 @@ function exportPng() {
 function exportUnderbase() {
   if (!state.result || !state.image) return;
   setExportBusy(true);
-  els.status.textContent = 'Rendering white-underbase PNG…';
+  els.status.textContent = 'Rendering pre-halftone white underbase…';
+
   requestAnimationFrame(async () => {
     try {
-      const { canvas, ctx, output, width, height, scale } = renderFullResolution();
-      const underbase = createUnderbaseImageData(output, width, height, Number(els.choke.value));
+      const { canvas, ctx, source, width, height, scale } = renderExportSource();
+      const coverage = processCoverageForExport(source, width, height, settings());
+      const underbase = createUnderbaseImageData(
+        coverage,
+        width,
+        height,
+        Number(els.choke.value),
+        settings(),
+      );
       ctx.clearRect(0, 0, width, height);
       ctx.putImageData(underbase, 0, 0);
       const dpi = Number(els.dpi.value);
-      await downloadCanvasPng(canvas, `${state.filename}-white-underbase.png`, dpi);
-      els.status.textContent = `Exported underbase ${width}×${height}px @ ${dpi} DPI · choke ${els.choke.value}px${scale < 1 ? ' (6000px max side)' : ''}`;
+      await downloadCanvasPng(canvas, `${state.filename}-white-underbase-v03.png`, dpi);
+      els.status.textContent = `Exported underbase ${width}×${height}px @ ${dpi} DPI · pre-halftone choke ${els.choke.value}px${scale < 1 ? ' (6000px max side)' : ''}`;
     } catch (error) {
       console.error(error);
       els.status.textContent = 'Underbase export failed.';
@@ -263,8 +309,13 @@ function pickColor(event) {
   const x = Math.floor((event.clientX - rect.left) * (state.sourceCanvas.width / rect.width));
   const y = Math.floor((event.clientY - rect.top) * (state.sourceCanvas.height / rect.height));
   if (x < 0 || y < 0 || x >= state.sourceCanvas.width || y >= state.sourceCanvas.height) return;
+
   const i = (y * state.sourceCanvas.width + x) * 4;
-  const hex = rgbToHex({ r: state.sourceData.data[i], g: state.sourceData.data[i + 1], b: state.sourceData.data[i + 2] });
+  const hex = rgbToHex({
+    r: state.sourceData.data[i],
+    g: state.sourceData.data[i + 1],
+    b: state.sourceData.data[i + 2],
+  });
   els.knockoutColor.value = hex;
   state.picking = false;
   els.eyedropperBtn.classList.remove('active');
@@ -274,24 +325,52 @@ function pickColor(event) {
 
 els.fileInput.addEventListener('change', (e) => loadFile(e.target.files?.[0]));
 ['dragenter', 'dragover'].forEach((name) => els.dropZone.addEventListener(name, (e) => {
-  e.preventDefault(); els.dropZone.classList.add('dragover');
+  e.preventDefault();
+  els.dropZone.classList.add('dragover');
 }));
 ['dragleave', 'drop'].forEach((name) => els.dropZone.addEventListener(name, (e) => {
-  e.preventDefault(); els.dropZone.classList.remove('dragover');
+  e.preventDefault();
+  els.dropZone.classList.remove('dragover');
 }));
 els.dropZone.addEventListener('drop', (e) => loadFile(e.dataTransfer.files?.[0]));
 
-[els.knockoutColor, els.tolerance, els.strength, els.chromaProtection, els.lpi, els.angle, els.shape, els.dpi, els.choke]
-  .forEach((el) => el.addEventListener('input', render));
+[
+  els.backgroundTolerance,
+  els.knockoutColor,
+  els.internalTolerance,
+  els.strength,
+  els.chromaProtection,
+  els.lpi,
+  els.angle,
+  els.shape,
+  els.dpi,
+  els.choke,
+].forEach((el) => el.addEventListener('input', render));
 
-els.garmentColor.addEventListener('input', () => { updateLabels(); updateStage(); });
+els.backgroundCleanup.addEventListener('change', render);
+els.autoEdgeSample.addEventListener('change', () => {
+  if (els.autoEdgeSample.checked) sampleBackgroundFromCurrentImage();
+  render();
+});
+els.backgroundColor.addEventListener('input', () => {
+  // Manual color selection takes ownership from auto-sampling until re-enabled.
+  els.autoEdgeSample.checked = false;
+  render();
+});
+
+els.garmentColor.addEventListener('input', () => {
+  updateLabels();
+  updateStage();
+});
 
 els.eyedropperBtn.addEventListener('click', () => {
   if (!state.sourceData) return;
   state.picking = !state.picking;
   els.eyedropperBtn.classList.toggle('active', state.picking);
   els.previewCanvas.style.cursor = state.picking ? 'crosshair' : 'default';
-  els.status.textContent = state.picking ? 'Click the artwork to sample a knockout color' : 'Color picker cancelled';
+  els.status.textContent = state.picking
+    ? 'Click the artwork to sample the INTERNAL knockout color'
+    : 'Color picker cancelled';
 });
 els.previewCanvas.addEventListener('click', pickColor);
 
@@ -313,10 +392,14 @@ els.exportBtn.addEventListener('click', exportPng);
 els.exportUnderbaseBtn.addEventListener('click', exportUnderbase);
 els.resetBtn.addEventListener('click', () => {
   els.garmentColor.value = '#111111';
+  els.backgroundCleanup.checked = true;
+  els.autoEdgeSample.checked = true;
+  els.backgroundColor.value = '#000000';
+  els.backgroundTolerance.value = 58;
   els.knockoutColor.value = '#000000';
-  els.tolerance.value = 30;
+  els.internalTolerance.value = 34;
   els.strength.value = 100;
-  els.chromaProtection.value = 70;
+  els.chromaProtection.value = 80;
   els.lpi.value = 35;
   els.angle.value = 22.5;
   els.shape.value = 'circle';
@@ -324,6 +407,7 @@ els.resetBtn.addEventListener('click', () => {
   els.choke.value = 1;
   state.mode = 'halftone';
   document.querySelectorAll('.segment').forEach((b) => b.classList.toggle('active', b.dataset.mode === 'halftone'));
+  sampleBackgroundFromCurrentImage();
   render();
 });
 
