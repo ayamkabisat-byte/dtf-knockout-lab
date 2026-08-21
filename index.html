@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111111" />
+    <meta name="description" content="DTF Knockout Lab — browser-based garment color knockout and binary halftone preparation for DTF/DTG artwork." />
+    <title>DTF Knockout Lab</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">PRINT PREP / EXPERIMENTAL</p>
+          <h1>DTF Knockout Lab <span>v0.1</span></h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="resetBtn" class="button ghost" type="button">Reset</button>
+          <button id="exportBtn" class="button primary" type="button" disabled>Export PNG</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="panel controls-panel">
+          <section class="control-section">
+            <div class="section-heading">
+              <span class="step">01</span>
+              <div>
+                <h2>Artwork</h2>
+                <p>PNG, JPG or WEBP. Processing stays in your browser.</p>
+              </div>
+            </div>
+            <label id="dropZone" class="drop-zone">
+              <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+              <strong>Drop artwork here</strong>
+              <span>or click to browse</span>
+            </label>
+            <div id="fileMeta" class="file-meta hidden"></div>
+          </section>
+
+          <section class="control-section">
+            <div class="section-heading compact">
+              <span class="step">02</span>
+              <div>
+                <h2>Knockout</h2>
+                <p>Choose the garment / color that should become transparent.</p>
+              </div>
+            </div>
+
+            <div class="control-row color-row">
+              <label for="garmentColor">Garment preview</label>
+              <div class="color-control">
+                <input id="garmentColor" type="color" value="#111111" />
+                <code id="garmentHex">#111111</code>
+              </div>
+            </div>
+
+            <div class="control-row color-row">
+              <label for="knockoutColor">Knockout color</label>
+              <div class="color-control">
+                <input id="knockoutColor" type="color" value="#000000" />
+                <code id="knockoutHex">#000000</code>
+                <button id="eyedropperBtn" class="icon-button" type="button" title="Pick from image">◎</button>
+              </div>
+            </div>
+
+            <label class="slider-control">
+              <span><b>Tolerance</b><output id="toleranceOut">30</output></span>
+              <input id="tolerance" type="range" min="1" max="100" value="30" />
+            </label>
+
+            <label class="slider-control">
+              <span><b>Knockout strength</b><output id="strengthOut">100%</output></span>
+              <input id="strength" type="range" min="0" max="100" value="100" />
+            </label>
+
+            <label class="slider-control">
+              <span><b>Chroma protection</b><output id="chromaOut">70%</output></span>
+              <input id="chromaProtection" type="range" min="0" max="100" value="70" />
+            </label>
+          </section>
+
+          <section class="control-section">
+            <div class="section-heading compact">
+              <span class="step">03</span>
+              <div>
+                <h2>Halftone transition</h2>
+                <p>Binary alpha only: printed pixel or transparent pixel.</p>
+              </div>
+            </div>
+
+            <div class="segmented" role="group" aria-label="Halftone mode">
+              <button class="segment active" data-mode="halftone" type="button">Halftone</button>
+              <button class="segment" data-mode="hard" type="button">Hard knockout</button>
+            </div>
+
+            <label class="slider-control">
+              <span><b>LPI</b><output id="lpiOut">35</output></span>
+              <input id="lpi" type="range" min="15" max="55" value="35" />
+            </label>
+
+            <label class="slider-control">
+              <span><b>Angle</b><output id="angleOut">22.5°</output></span>
+              <input id="angle" type="range" min="0" max="90" value="22.5" step="0.5" />
+            </label>
+
+            <div class="control-row">
+              <label for="shape">Dot shape</label>
+              <select id="shape">
+                <option value="circle">Circle</option>
+                <option value="ellipse">Ellipse</option>
+                <option value="diamond">Diamond</option>
+                <option value="square">Square</option>
+                <option value="line">Line</option>
+              </select>
+            </div>
+
+            <label class="slider-control">
+              <span><b>Output DPI</b><output id="dpiOut">300</output></span>
+              <input id="dpi" type="range" min="150" max="600" value="300" step="50" />
+            </label>
+          </section>
+        </aside>
+
+        <section class="preview-column">
+          <div class="preview-toolbar">
+            <div class="view-tabs" role="tablist">
+              <button class="view-tab" data-view="original" type="button">Original</button>
+              <button class="view-tab active" data-view="garment" type="button">Garment</button>
+              <button class="view-tab" data-view="transparency" type="button">Transparency</button>
+              <button class="view-tab" data-view="mask" type="button">Mask</button>
+            </div>
+            <div id="status" class="status">Upload artwork to begin</div>
+          </div>
+
+          <div id="canvasStage" class="canvas-stage garment-stage">
+            <div id="emptyState" class="empty-state">
+              <div class="empty-icon">✦</div>
+              <h2>Artwork preview</h2>
+              <p>Upload an image and tune the knockout in real time.</p>
+            </div>
+            <canvas id="previewCanvas" class="hidden"></canvas>
+          </div>
+
+          <div class="info-strip">
+            <div><span>Engine</span><b>OKLab color distance</b></div>
+            <div><span>Alpha</span><b>Binary 0 / 255</b></div>
+            <div><span>Render</span><b>Client-side Canvas</b></div>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>
