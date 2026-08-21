@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#111111" />
-    <meta name="description" content="DTF Knockout Lab — browser-based garment color knockout, halftone and white-underbase preparation for DTF/DTG artwork." />
+    <meta name="description" content="DTF Knockout Lab — edge-aware background cleanup, refined internal garment knockout, smoother binary halftone and white-underbase preparation for DTF/DTG artwork." />
     <title>DTF Knockout Lab</title>
   </head>
   <body>
@@ -12,7 +12,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">PRINT PREP / EXPERIMENTAL</p>
-          <h1>DTF Knockout Lab <span>v0.2</span></h1>
+          <h1>DTF Knockout Lab <span>v0.3.1</span></h1>
         </div>
         <div class="topbar-actions">
           <button id="resetBtn" class="button ghost" type="button">Reset</button>
@@ -43,8 +43,8 @@
             <div class="section-heading compact">
               <span class="step">02</span>
               <div>
-                <h2>Knockout</h2>
-                <p>Choose the garment / color that should become transparent.</p>
+                <h2>Background cleanup</h2>
+                <p>Remove only dark/color-matched regions connected to the canvas edge.</p>
               </div>
             </div>
 
@@ -56,18 +56,51 @@
               </div>
             </div>
 
+            <div class="control-row">
+              <label for="backgroundCleanup">Background cleanup</label>
+              <input id="backgroundCleanup" type="checkbox" checked />
+            </div>
+
+            <div class="control-row">
+              <label for="autoEdgeSample">Auto edge sample</label>
+              <input id="autoEdgeSample" type="checkbox" checked />
+            </div>
+
+            <div class="control-row color-row">
+              <label for="backgroundColor">Background color</label>
+              <div class="color-control">
+                <input id="backgroundColor" type="color" value="#000000" />
+                <code id="backgroundHex">#000000</code>
+              </div>
+            </div>
+
+            <label class="slider-control">
+              <span><b>Background tolerance</b><output id="backgroundToleranceOut">58</output></span>
+              <input id="backgroundTolerance" type="range" min="1" max="100" value="58" />
+            </label>
+          </section>
+
+          <section class="control-section">
+            <div class="section-heading compact">
+              <span class="step">03</span>
+              <div>
+                <h2>Internal knockout</h2>
+                <p>Knock out black/dark ink inside the artwork independently from background removal.</p>
+              </div>
+            </div>
+
             <div class="control-row color-row">
               <label for="knockoutColor">Knockout color</label>
               <div class="color-control">
                 <input id="knockoutColor" type="color" value="#000000" />
                 <code id="knockoutHex">#000000</code>
-                <button id="eyedropperBtn" class="icon-button" type="button" title="Pick from image">◎</button>
+                <button id="eyedropperBtn" class="icon-button" type="button" title="Pick internal knockout color from image">◎</button>
               </div>
             </div>
 
             <label class="slider-control">
-              <span><b>Tolerance</b><output id="toleranceOut">30</output></span>
-              <input id="tolerance" type="range" min="1" max="100" value="30" />
+              <span><b>Internal tolerance</b><output id="internalToleranceOut">34</output></span>
+              <input id="internalTolerance" type="range" min="1" max="100" value="34" />
             </label>
 
             <label class="slider-control">
@@ -76,17 +109,22 @@
             </label>
 
             <label class="slider-control">
-              <span><b>Chroma protection</b><output id="chromaOut">70%</output></span>
-              <input id="chromaProtection" type="range" min="0" max="100" value="70" />
+              <span><b>Chroma protection</b><output id="chromaOut">80%</output></span>
+              <input id="chromaProtection" type="range" min="0" max="100" value="80" />
+            </label>
+
+            <label class="slider-control">
+              <span><b>Shadow recovery</b><output id="shadowRecoveryOut">18%</output></span>
+              <input id="shadowRecovery" type="range" min="0" max="60" value="18" />
             </label>
           </section>
 
           <section class="control-section">
             <div class="section-heading compact">
-              <span class="step">03</span>
+              <span class="step">04</span>
               <div>
                 <h2>Halftone transition</h2>
-                <p>Binary alpha only: printed pixel or transparent pixel.</p>
+                <p>Binary alpha only: printed pixel or transparent pixel. Smooth the coverage map instead of blurring the artwork RGB.</p>
               </div>
             </div>
 
@@ -117,6 +155,16 @@
             </div>
 
             <label class="slider-control">
+              <span><b>Screen smooth</b><output id="screenSmoothOut">1.0px</output></span>
+              <input id="screenSmooth" type="range" min="0" max="20" value="10" step="1" />
+            </label>
+
+            <label class="slider-control">
+              <span><b>Transition gamma</b><output id="gammaOut">1.00</output></span>
+              <input id="transitionGamma" type="range" min="60" max="180" value="100" step="1" />
+            </label>
+
+            <label class="slider-control">
               <span><b>Output DPI</b><output id="dpiOut">300</output></span>
               <input id="dpi" type="range" min="150" max="600" value="300" step="50" />
             </label>
@@ -124,10 +172,10 @@
 
           <section class="control-section">
             <div class="section-heading compact">
-              <span class="step">04</span>
+              <span class="step">05</span>
               <div>
                 <h2>White underbase</h2>
-                <p>Generate a binary white base from the final print alpha and choke it inward to reduce white halos.</p>
+                <p>Choke the continuous print support before halftoning so small dots survive.</p>
               </div>
             </div>
 
@@ -144,6 +192,8 @@
               <button class="view-tab" data-view="original" type="button">Original</button>
               <button class="view-tab active" data-view="garment" type="button">Garment</button>
               <button class="view-tab" data-view="transparency" type="button">Transparency</button>
+              <button class="view-tab" data-view="background" type="button">Background</button>
+              <button class="view-tab" data-view="knockout" type="button">Knockout</button>
               <button class="view-tab" data-view="mask" type="button">Mask</button>
               <button class="view-tab" data-view="underbase" type="button">Underbase</button>
             </div>
@@ -154,15 +204,15 @@
             <div id="emptyState" class="empty-state">
               <div class="empty-icon">✦</div>
               <h2>Artwork preview</h2>
-              <p>Upload an image and tune the knockout in real time.</p>
+              <p>Upload an image and tune background cleanup and internal knockout independently.</p>
             </div>
             <canvas id="previewCanvas" class="hidden"></canvas>
           </div>
 
           <div class="info-strip">
-            <div><span>Engine</span><b>OKLab + binary halftone</b></div>
-            <div><span>Alpha</span><b>Binary 0 / 255</b></div>
-            <div><span>Prepress</span><b>DPI + white underbase</b></div>
+            <div><span>Background</span><b>Edge-connected cleanup</b></div>
+            <div><span>Knockout</span><b>OKLab + smoother halftone</b></div>
+            <div><span>Underbase</span><b>Pre-halftone choke</b></div>
           </div>
         </section>
       </section>

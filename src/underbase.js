@@ -1,8 +1,11 @@
-function binaryAlpha(processed, width, height) {
-  const source = processed.data;
-  const alpha = new Uint8Array(width * height);
-  for (let p = 0, i = 3; p < alpha.length; p++, i += 4) alpha[p] = source[i] >= 128 ? 1 : 0;
-  return alpha;
+import { rasterizeCoverageMask } from './engine.js';
+
+function binarySupport(coverage) {
+  const support = new Uint8Array(coverage.length);
+  // Ignore negligible floating-point/edge coverage when defining the support
+  // perimeter. The actual tonal coverage is preserved after the choke.
+  for (let p = 0; p < coverage.length; p++) support[p] = coverage[p] >= 2 ? 1 : 0;
+  return support;
 }
 
 function erodeHorizontal(input, width, height, radius) {
@@ -36,21 +39,20 @@ function erodeVertical(input, width, height, radius) {
   return output;
 }
 
-export function createUnderbaseImageData(processed, width, height, chokePx = 0) {
+export function createUnderbaseImageData(coverage, width, height, chokePx = 0, rasterSettings = {}) {
   const radius = Math.max(0, Math.round(chokePx));
-  const base = binaryAlpha(processed, width, height);
-  const eroded = radius > 0
-    ? erodeVertical(erodeHorizontal(base, width, height, radius), width, height, radius)
-    : base;
+  const support = binarySupport(coverage);
+  const chokedSupport = radius > 0
+    ? erodeVertical(erodeHorizontal(support, width, height, radius), width, height, radius)
+    : support;
 
-  const output = new Uint8ClampedArray(width * height * 4);
-  for (let p = 0, i = 0; p < eroded.length; p++, i += 4) {
-    if (!eroded[p]) continue;
-    output[i] = 255;
-    output[i + 1] = 255;
-    output[i + 2] = 255;
-    output[i + 3] = 255;
+  // Important v0.3 change: choke the continuous support BEFORE halftoning.
+  // This preserves small halftone dots inside the artwork instead of eroding
+  // every final dot independently as v0.2 did.
+  const chokedCoverage = new Uint8Array(coverage.length);
+  for (let p = 0; p < coverage.length; p++) {
+    if (chokedSupport[p]) chokedCoverage[p] = coverage[p];
   }
 
-  return new ImageData(output, width, height);
+  return rasterizeCoverageMask(chokedCoverage, width, height, rasterSettings);
 }
