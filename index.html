@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#111111" />
-    <meta name="description" content="DTF Knockout Lab — browser-based garment color knockout and binary halftone preparation for DTF/DTG artwork." />
+    <meta name="description" content="DTF Knockout Lab — browser-based garment color knockout, halftone and white-underbase preparation for DTF/DTG artwork." />
     <title>DTF Knockout Lab</title>
   </head>
   <body>
@@ -12,11 +12,12 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">PRINT PREP / EXPERIMENTAL</p>
-          <h1>DTF Knockout Lab <span>v0.1.1</span></h1>
+          <h1>DTF Knockout Lab <span>v0.2</span></h1>
         </div>
         <div class="topbar-actions">
           <button id="resetBtn" class="button ghost" type="button">Reset</button>
-          <button id="exportBtn" class="button primary" type="button" disabled>Export PNG</button>
+          <button id="exportUnderbaseBtn" class="button ghost" type="button" disabled>Export Underbase</button>
+          <button id="exportBtn" class="button primary" type="button" disabled>Export Color PNG</button>
         </div>
       </header>
 
@@ -120,6 +121,21 @@
               <input id="dpi" type="range" min="150" max="600" value="300" step="50" />
             </label>
           </section>
+
+          <section class="control-section">
+            <div class="section-heading compact">
+              <span class="step">04</span>
+              <div>
+                <h2>White underbase</h2>
+                <p>Generate a binary white base from the final print alpha and choke it inward to reduce white halos.</p>
+              </div>
+            </div>
+
+            <label class="slider-control">
+              <span><b>Choke</b><output id="chokeOut">1px</output></span>
+              <input id="choke" type="range" min="0" max="3" value="1" step="1" />
+            </label>
+          </section>
         </aside>
 
         <section class="preview-column">
@@ -129,6 +145,7 @@
               <button class="view-tab active" data-view="garment" type="button">Garment</button>
               <button class="view-tab" data-view="transparency" type="button">Transparency</button>
               <button class="view-tab" data-view="mask" type="button">Mask</button>
+              <button class="view-tab" data-view="underbase" type="button">Underbase</button>
             </div>
             <div id="status" class="status">Upload artwork to begin</div>
           </div>
@@ -143,9 +160,9 @@
           </div>
 
           <div class="info-strip">
-            <div><span>Engine</span><b>OKLab color distance</b></div>
+            <div><span>Engine</span><b>OKLab + binary halftone</b></div>
             <div><span>Alpha</span><b>Binary 0 / 255</b></div>
-            <div><span>Export</span><b>PNG + embedded DPI</b></div>
+            <div><span>Prepress</span><b>DPI + white underbase</b></div>
           </div>
         </section>
       </section>
