@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#111111" />
-    <meta name="description" content="DTF Knockout Lab — edge-aware background cleanup, refined internal garment knockout, smoother binary halftone and white-underbase preparation for DTF/DTG artwork." />
+    <meta name="description" content="DTF Knockout Lab — edge-aware background cleanup, refined garment knockout, procedural distress textures, print preflight, binary halftone and white-underbase preparation for DTF/DTG artwork." />
     <title>DTF Knockout Lab</title>
   </head>
   <body>
@@ -12,7 +12,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">PRINT PREP / EXPERIMENTAL</p>
-          <h1>DTF Knockout Lab <span>v0.3.1</span></h1>
+          <h1>DTF Knockout Lab <span>v0.4</span></h1>
         </div>
         <div class="topbar-actions">
           <button id="resetBtn" class="button ghost" type="button">Reset</button>
@@ -174,6 +174,42 @@
             <div class="section-heading compact">
               <span class="step">05</span>
               <div>
+                <h2>Texture / Distress</h2>
+                <p>Original procedural knockout textures. Applied to print coverage before final halftone rasterization.</p>
+              </div>
+            </div>
+
+            <div class="control-row">
+              <label for="distressStyle">Texture style</label>
+              <select id="distressStyle">
+                <option value="none">None</option>
+                <option value="fine">Fine Grain</option>
+                <option value="coarse">Coarse Speckle</option>
+                <option value="scratches">Scratches</option>
+                <option value="vintage">Vintage Mix</option>
+              </select>
+            </div>
+
+            <label class="slider-control">
+              <span><b>Amount</b><output id="distressAmountOut">0%</output></span>
+              <input id="distressAmount" type="range" min="0" max="60" value="0" />
+            </label>
+
+            <label class="slider-control">
+              <span><b>Texture scale</b><output id="distressScaleOut">5</output></span>
+              <input id="distressScale" type="range" min="1" max="12" value="5" />
+            </label>
+
+            <label class="slider-control">
+              <span><b>Seed</b><output id="distressSeedOut">17</output></span>
+              <input id="distressSeed" type="range" min="1" max="99" value="17" />
+            </label>
+          </section>
+
+          <section class="control-section">
+            <div class="section-heading compact">
+              <span class="step">06</span>
+              <div>
                 <h2>White underbase</h2>
                 <p>Choke the continuous print support before halftoning so small dots survive.</p>
               </div>
@@ -183,6 +219,24 @@
               <span><b>Choke</b><output id="chokeOut">1px</output></span>
               <input id="choke" type="range" min="0" max="3" value="1" step="1" />
             </label>
+          </section>
+
+          <section class="control-section">
+            <div class="section-heading compact">
+              <span class="step">07</span>
+              <div>
+                <h2>Print preflight</h2>
+                <p>Checks the current preview output before export.</p>
+              </div>
+            </div>
+            <div class="preflight-grid">
+              <div class="preflight-item"><span>Final alpha</span><b id="preflightAlpha">—</b></div>
+              <div class="preflight-item"><span>Source alpha</span><b id="preflightSourceAlpha">—</b></div>
+              <div class="preflight-item"><span>Print coverage</span><b id="preflightCoverage">—</b></div>
+              <div class="preflight-item"><span>Ink reduction</span><b id="preflightReduction">—</b></div>
+              <div class="preflight-item"><span>Halftone pitch</span><b id="preflightPitch">—</b></div>
+              <div class="preflight-item"><span>Print size</span><b id="preflightSize">—</b></div>
+            </div>
           </section>
         </aside>
 
@@ -195,6 +249,7 @@
               <button class="view-tab" data-view="background" type="button">Background</button>
               <button class="view-tab" data-view="knockout" type="button">Knockout</button>
               <button class="view-tab" data-view="mask" type="button">Mask</button>
+              <button class="view-tab" data-view="texture" type="button">Texture</button>
               <button class="view-tab" data-view="underbase" type="button">Underbase</button>
             </div>
             <div id="status" class="status">Upload artwork to begin</div>
@@ -211,8 +266,9 @@
 
           <div class="info-strip">
             <div><span>Background</span><b>Edge-connected cleanup</b></div>
-            <div><span>Knockout</span><b>OKLab + smoother halftone</b></div>
-            <div><span>Underbase</span><b>Pre-halftone choke</b></div>
+            <div><span>Halftone</span><b>Binary print-ready alpha</b></div>
+            <div><span>Texture</span><b>Procedural distress engine</b></div>
+            <div><span>Preflight</span><b>Coverage + alpha checks</b></div>
           </div>
         </section>
       </section>
