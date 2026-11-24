@@ -4,6 +4,13 @@ const smoothstep = (edge0, edge1, x) => {
   return t * t * (3 - 2 * t);
 };
 
+function toleranceRadius(tolerance, background = false) {
+  const t = clamp(Number(tolerance) / 100);
+  return background
+    ? 0.010 + Math.pow(t, 1.2) * 0.42
+    : 0.008 + Math.pow(t, 1.35) * 0.34;
+}
+
 export function hexToRgb(hex) {
   const value = hex.replace('#', '');
   return {
@@ -14,7 +21,9 @@ export function hexToRgb(hex) {
 }
 
 export function rgbToHex({ r, g, b }) {
-  return `#${[r, g, b].map((n) => Math.round(clamp(n, 0, 255)).toString(16).padStart(2, '0')).join('')}`;
+  return `#${[r, g, b]
+    .map((n) => Math.round(clamp(n, 0, 255)).toString(16).padStart(2, '0'))
+    .join('')}`;
 }
 
 function srgbToLinear(v) {
@@ -29,7 +38,9 @@ export function rgbToOklab(r, g, b) {
   const l = 0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B;
   const m = 0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B;
   const s = 0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B;
-  const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
+  const l_ = Math.cbrt(l);
+  const m_ = Math.cbrt(m);
+  const s_ = Math.cbrt(s);
   const L = 0.2104542553 * l_ + 0.793617785 * m_ - 0.0040720468 * s_;
   const a = 1.9779984951 * l_ - 2.428592205 * m_ + 0.4505937099 * s_;
   const bb = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.808675766 * s_;
@@ -42,12 +53,15 @@ function colorDistance(a, b) {
 
 function patternThreshold(x, y, period, angleDeg, shape) {
   const angle = (angleDeg * Math.PI) / 180;
-  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
   const xr = x * cos + y * sin;
   const yr = -x * sin + y * cos;
   const fx = ((xr / period) % 1 + 1) % 1 - 0.5;
   const fy = ((yr / period) % 1 + 1) % 1 - 0.5;
-  const ax = Math.abs(fx) * 2, ay = Math.abs(fy) * 2;
+  const ax = Math.abs(fx) * 2;
+  const ay = Math.abs(fy) * 2;
+
   switch (shape) {
     case 'square': return clamp(Math.max(ax, ay));
     case 'diamond': return clamp((ax + ay) * 0.72);
@@ -58,82 +72,371 @@ function patternThreshold(x, y, period, angleDeg, shape) {
   }
 }
 
-function makeProcessor(settings) {
+function makeRasterizer(settings) {
   const {
-    knockoutColor = '#000000', tolerance = 30, strength = 100,
-    chromaProtection = 70, mode = 'halftone', lpi = 35,
-    angle = 22.5, shape = 'circle', dpi = 300,
+    mode = 'halftone', lpi = 35, angle = 22.5,
+    shape = 'circle', dpi = 300,
+  } = settings;
+  const period = Math.max(1, dpi / Math.max(1, lpi));
+
+  return (coverage, x, y) => {
+    if (mode === 'hard') return coverage >= 0.5;
+    if (coverage <= 0.01) return false;
+    if (coverage >= 0.995) return true;
+    return coverage >= patternThreshold(x, y, period, angle, shape);
+  };
+}
+
+function makeInternalProcessor(settings) {
+  const {
+    knockoutColor = '#000000', internalTolerance = 34,
+    strength = 100, chromaProtection = 80, shadowRecovery = 18,
   } = settings;
 
   const targetRgb = hexToRgb(knockoutColor);
   const targetLab = rgbToOklab(targetRgb.r, targetRgb.g, targetRgb.b);
-  const radius = 0.008 + Math.pow(tolerance / 100, 1.35) * 0.34;
+  const radius = toleranceRadius(internalTolerance, false);
   const featherStart = radius * 0.28;
-  const strengthN = strength / 100;
-  const chromaN = chromaProtection / 100;
-  // Preview rendering may use an effective DPI below the output DPI after
-  // downsampling. Allow periods down to one preview pixel so its physical dot
-  // spacing remains proportional to the full-resolution export.
-  const period = Math.max(1, dpi / Math.max(1, lpi));
+  const strengthN = clamp(strength / 100);
+  const chromaN = clamp(chromaProtection / 100);
+  const shadowN = clamp(shadowRecovery / 100);
   const targetNeutrality = 1 - clamp(targetLab.C / 0.14);
 
-  return (r, g, b, sourceAlpha, x, y) => {
-    if (sourceAlpha === 0) return { alpha: 0, match: 1 };
+  return (r, g, b, sourceAlpha) => {
+    if (sourceAlpha === 0) return { coverage: 0, match: 1 };
+
     const lab = rgbToOklab(r, g, b);
     const distance = colorDistance(lab, targetLab);
     let match = 1 - smoothstep(featherStart, radius, distance);
+
     const excessChroma = clamp((lab.C - targetLab.C - 0.012) / 0.16);
     match *= 1 - excessChroma * targetNeutrality * chromaN;
     match = clamp(match * strengthN);
 
-    const printCoverage = 1 - match;
-    let printed;
-    if (mode === 'hard') printed = printCoverage >= 0.5;
-    else if (printCoverage <= 0.002) printed = false;
-    else if (printCoverage >= 0.998) printed = true;
-    else printed = printCoverage >= patternThreshold(x, y, period, angle, shape);
+    const sourceOpacity = sourceAlpha / 255;
+    let coverage = clamp((1 - match) * sourceOpacity);
 
-    return { alpha: printed && sourceAlpha >= 128 ? 255 : 0, match };
+    const darkness = clamp((0.72 - lab.L) / 0.72);
+    const recovery = excessChroma * darkness * shadowN * 0.65;
+    if (recovery > 0) coverage = clamp(coverage + (1 - coverage) * recovery);
+
+    return { coverage, match };
   };
 }
 
-export function processImageData(source, width, height, settings) {
-  const processPixel = makeProcessor(settings);
-  const processed = new Uint8ClampedArray(source.data.length);
-  const mask = new Uint8ClampedArray(source.data.length);
-  const knockoutMap = new Uint8ClampedArray(source.data.length);
-  const original = new Uint8ClampedArray(source.data);
+export function sampleEdgeBackgroundColor(source, width, height) {
+  const data = source.data;
+  const band = Math.max(1, Math.round(Math.min(width, height) * 0.012));
+  const counts = new Uint32Array(4096);
+  const sumR = new Float64Array(4096);
+  const sumG = new Float64Array(4096);
+  const sumB = new Float64Array(4096);
+
+  const addPixel = (x, y) => {
+    const i = (y * width + x) * 4;
+    if (data[i + 3] <= 8) return;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+    counts[key]++;
+    sumR[key] += r;
+    sumG[key] += g;
+    sumB[key] += b;
+  };
+
+  for (let y = 0; y < band; y++) {
+    for (let x = 0; x < width; x++) {
+      addPixel(x, y);
+      if (height - 1 - y !== y) addPixel(x, height - 1 - y);
+    }
+  }
+  for (let x = 0; x < band; x++) {
+    for (let y = band; y < height - band; y++) {
+      addPixel(x, y);
+      if (width - 1 - x !== x) addPixel(width - 1 - x, y);
+    }
+  }
+
+  let winner = -1;
+  let bestCount = 0;
+  for (let key = 0; key < counts.length; key++) {
+    if (counts[key] > bestCount) {
+      bestCount = counts[key];
+      winner = key;
+    }
+  }
+
+  if (winner < 0 || bestCount === 0) return '#000000';
+  return rgbToHex({
+    r: sumR[winner] / bestCount,
+    g: sumG[winner] / bestCount,
+    b: sumB[winner] / bestCount,
+  });
+}
+
+function candidateSupport(states, width, height, index) {
+  const x = index % width;
+  const y = Math.floor(index / width);
+  let count = 0;
+
+  for (let dy = -1; dy <= 1; dy++) {
+    const yy = y + dy;
+    if (yy < 0 || yy >= height) continue;
+    const row = yy * width;
+    for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx;
+      if (xx < 0 || xx >= width) continue;
+      if (states[row + xx] !== 0) count++;
+    }
+  }
+  return count;
+}
+
+function buildEdgeConnectedBackground(source, width, height, settings) {
+  const {
+    backgroundCleanup = true,
+    backgroundColor = '#000000',
+    backgroundTolerance = 58,
+  } = settings;
+
+  const total = width * height;
+  const states = new Uint8Array(total);
+  if (!backgroundCleanup || total === 0) return states;
+
+  const targetRgb = hexToRgb(backgroundColor);
+  const targetLab = rgbToOklab(targetRgb.r, targetRgb.g, targetRgb.b);
+  const radius = toleranceRadius(backgroundTolerance, true);
+  const data = source.data;
+
+  for (let p = 0, i = 0; p < total; p++, i += 4) {
+    const alpha = data[i + 3];
+    if (alpha <= 8) {
+      states[p] = 1;
+      continue;
+    }
+    const lab = rgbToOklab(data[i], data[i + 1], data[i + 2]);
+    if (colorDistance(lab, targetLab) <= radius) states[p] = 1;
+  }
+
+  const queue = new Int32Array(total);
+  let head = 0;
+  let tail = 0;
+
+  const enqueueSeed = (p) => {
+    if (states[p] !== 1) return;
+    states[p] = 2;
+    queue[tail++] = p;
+  };
+
+  for (let x = 0; x < width; x++) {
+    enqueueSeed(x);
+    if (height > 1) enqueueSeed((height - 1) * width + x);
+  }
+  for (let y = 1; y < height - 1; y++) {
+    enqueueSeed(y * width);
+    if (width > 1) enqueueSeed(y * width + width - 1);
+  }
+
+  const tryExpand = (p) => {
+    if (states[p] !== 1) return;
+    if (candidateSupport(states, width, height, p) < 5) {
+      states[p] = 3;
+      return;
+    }
+    states[p] = 2;
+    queue[tail++] = p;
+  };
+
+  while (head < tail) {
+    const p = queue[head++];
+    const x = p % width;
+    const y = Math.floor(p / width);
+    if (x > 0) tryExpand(p - 1);
+    if (x + 1 < width) tryExpand(p + 1);
+    if (y > 0) tryExpand(p - width);
+    if (y + 1 < height) tryExpand(p + width);
+  }
+
+  return states;
+}
+
+function blurHorizontal(input, width, height, radius) {
+  if (radius <= 0) return Float32Array.from(input);
+  const output = new Float32Array(input.length);
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    let sum = 0;
+    for (let i = -radius; i <= radius; i++) {
+      const x = Math.min(width - 1, Math.max(0, i));
+      sum += input[row + x];
+    }
+    output[row] = sum / (radius * 2 + 1);
+    for (let x = 1; x < width; x++) {
+      const addX = Math.min(width - 1, x + radius);
+      const subX = Math.max(0, x - radius - 1);
+      sum += input[row + addX] - input[row + subX];
+      output[row + x] = sum / (radius * 2 + 1);
+    }
+  }
+  return output;
+}
+
+function blurVertical(input, width, height, radius) {
+  if (radius <= 0) return Float32Array.from(input);
+  const output = new Float32Array(input.length);
+  for (let x = 0; x < width; x++) {
+    let sum = 0;
+    for (let i = -radius; i <= radius; i++) {
+      const y = Math.min(height - 1, Math.max(0, i));
+      sum += input[y * width + x];
+    }
+    output[x] = sum / (radius * 2 + 1);
+    for (let y = 1; y < height; y++) {
+      const addY = Math.min(height - 1, y + radius);
+      const subY = Math.max(0, y - radius - 1);
+      sum += input[addY * width + x] - input[subY * width + x];
+      output[y * width + x] = sum / (radius * 2 + 1);
+    }
+  }
+  return output;
+}
+
+function refineCoverageMap(coverage, width, height, settings) {
+  const smoothPx = Math.max(0, Number(settings.screenSmooth) || 0);
+  const gamma = clamp(Number(settings.transitionGamma) || 1, 0.35, 2.5);
+  let refined = coverage;
+
+  const radius = Math.max(0, Math.round(smoothPx));
+  if (radius > 0) {
+    refined = blurVertical(blurHorizontal(refined, width, height, radius), width, height, radius);
+  }
+
+  const output = new Uint8Array(coverage.length);
+  for (let p = 0; p < output.length; p++) {
+    let c = clamp((refined[p] || 0) / 255);
+    if (gamma !== 1) c = Math.pow(c, 1 / gamma);
+    if (c < 0.025) c = 0;
+    else if (c > 0.985) c = 1;
+    output[p] = Math.round(c * 255);
+  }
+  return output;
+}
+
+function processCoverage(source, width, height, settings) {
+  const total = width * height;
+  const data = source.data;
+  const background = buildEdgeConnectedBackground(source, width, height, settings);
+  const processInternal = makeInternalProcessor(settings);
+  const rawCoverage = new Uint8Array(total);
+  const internalMatch = new Uint8Array(total);
+
+  for (let p = 0, i = 0; p < total; p++, i += 4) {
+    if (background[p] === 2 || data[i + 3] === 0) {
+      rawCoverage[p] = 0;
+      internalMatch[p] = 0;
+      continue;
+    }
+
+    const result = processInternal(data[i], data[i + 1], data[i + 2], data[i + 3]);
+    rawCoverage[p] = Math.round(result.coverage * 255);
+    internalMatch[p] = Math.round(result.match * 255);
+  }
+
+  const coverage = refineCoverageMap(rawCoverage, width, height, settings);
+  return { coverage, rawCoverage, internalMatch, background };
+}
+
+function renderColorFromCoverage(source, coverage, width, height, settings) {
+  const rasterize = makeRasterizer(settings);
+  const output = new Uint8ClampedArray(source.data.length);
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4;
-      const r = source.data[i], g = source.data[i + 1], b = source.data[i + 2], sourceAlpha = source.data[i + 3];
-      const { alpha, match } = processPixel(r, g, b, sourceAlpha, x, y);
-      processed[i] = r; processed[i + 1] = g; processed[i + 2] = b; processed[i + 3] = alpha;
-      mask[i] = alpha; mask[i + 1] = alpha; mask[i + 2] = alpha; mask[i + 3] = 255;
-      const k = Math.round(match * 255);
-      knockoutMap[i] = k; knockoutMap[i + 1] = k; knockoutMap[i + 2] = k; knockoutMap[i + 3] = 255;
+      const p = y * width + x;
+      const i = p * 4;
+      const printed = rasterize(coverage[p] / 255, x, y);
+      output[i] = source.data[i];
+      output[i + 1] = source.data[i + 1];
+      output[i + 2] = source.data[i + 2];
+      output[i + 3] = printed ? 255 : 0;
     }
   }
+
+  return new ImageData(output, width, height);
+}
+
+export function rasterizeCoverageMask(coverage, width, height, settings) {
+  const rasterize = makeRasterizer(settings);
+  const output = new Uint8ClampedArray(width * height * 4);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = y * width + x;
+      if (!rasterize(coverage[p] / 255, x, y)) continue;
+      const i = p * 4;
+      output[i] = 255;
+      output[i + 1] = 255;
+      output[i + 2] = 255;
+      output[i + 3] = 255;
+    }
+  }
+
+  return new ImageData(output, width, height);
+}
+
+export function processImageData(source, width, height, settings) {
+  const total = width * height;
+  const { coverage, rawCoverage, internalMatch, background } = processCoverage(source, width, height, settings);
+  const processed = renderColorFromCoverage(source, coverage, width, height, settings);
+  const mask = new Uint8ClampedArray(total * 4);
+  const knockoutMap = new Uint8ClampedArray(total * 4);
+  const backgroundMap = new Uint8ClampedArray(total * 4);
+  const coverageMap = new Uint8ClampedArray(total * 4);
+  const original = new Uint8ClampedArray(source.data);
+
+  for (let p = 0, i = 0; p < total; p++, i += 4) {
+    const alpha = processed.data[i + 3];
+    mask[i] = alpha;
+    mask[i + 1] = alpha;
+    mask[i + 2] = alpha;
+    mask[i + 3] = 255;
+
+    const internal = background[p] === 2 ? 0 : internalMatch[p];
+    knockoutMap[i] = internal;
+    knockoutMap[i + 1] = internal;
+    knockoutMap[i + 2] = internal;
+    knockoutMap[i + 3] = 255;
+
+    const bg = background[p] === 2 ? 255 : 0;
+    backgroundMap[i] = bg;
+    backgroundMap[i + 1] = bg;
+    backgroundMap[i + 2] = bg;
+    backgroundMap[i + 3] = 255;
+
+    const cov = coverage[p] || rawCoverage[p];
+    coverageMap[i] = cov;
+    coverageMap[i + 1] = cov;
+    coverageMap[i + 2] = cov;
+    coverageMap[i + 3] = 255;
+  }
+
   return {
-    processed: new ImageData(processed, width, height),
+    processed,
     mask: new ImageData(mask, width, height),
     knockoutMap: new ImageData(knockoutMap, width, height),
+    backgroundMap: new ImageData(backgroundMap, width, height),
+    coverageMap: new ImageData(coverageMap, width, height),
+    coverage,
     original: new ImageData(original, width, height),
   };
 }
 
-// Memory-lean version used for full-resolution export.
+export function processCoverageForExport(source, width, height, settings) {
+  return processCoverage(source, width, height, settings).coverage;
+}
+
 export function processForExport(source, width, height, settings) {
-  const processPixel = makeProcessor(settings);
-  const processed = new Uint8ClampedArray(source.data.length);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4;
-      const r = source.data[i], g = source.data[i + 1], b = source.data[i + 2], sourceAlpha = source.data[i + 3];
-      const { alpha } = processPixel(r, g, b, sourceAlpha, x, y);
-      processed[i] = r; processed[i + 1] = g; processed[i + 2] = b; processed[i + 3] = alpha;
-    }
-  }
-  return new ImageData(processed, width, height);
+  const coverage = processCoverageForExport(source, width, height, settings);
+  return renderColorFromCoverage(source, coverage, width, height, settings);
 }
