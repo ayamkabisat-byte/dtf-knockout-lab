@@ -25,7 +25,14 @@ const els = {
   shape: $('shape'), screenSmooth: $('screenSmooth'), screenSmoothOut: $('screenSmoothOut'),
   transitionGamma: $('transitionGamma'), gammaOut: $('gammaOut'),
   dpi: $('dpi'), dpiOut: $('dpiOut'),
+  distressStyle: $('distressStyle'),
+  distressAmount: $('distressAmount'), distressAmountOut: $('distressAmountOut'),
+  distressScale: $('distressScale'), distressScaleOut: $('distressScaleOut'),
+  distressSeed: $('distressSeed'), distressSeedOut: $('distressSeedOut'),
   choke: $('choke'), chokeOut: $('chokeOut'),
+  preflightAlpha: $('preflightAlpha'), preflightSourceAlpha: $('preflightSourceAlpha'),
+  preflightCoverage: $('preflightCoverage'), preflightReduction: $('preflightReduction'),
+  preflightPitch: $('preflightPitch'), preflightSize: $('preflightSize'),
   resetBtn: $('resetBtn'), exportBtn: $('exportBtn'), exportUnderbaseBtn: $('exportUnderbaseBtn'),
   canvasStage: $('canvasStage'), previewCanvas: $('previewCanvas'), emptyState: $('emptyState'), status: $('status'),
 };
@@ -62,6 +69,10 @@ function settings({ preview = false } = {}) {
     shape: els.shape.value,
     screenSmooth: Number(els.screenSmooth.value) / 10,
     transitionGamma: Number(els.transitionGamma.value) / 100,
+    distressStyle: els.distressStyle.value,
+    distressAmount: Number(els.distressAmount.value),
+    distressScale: Number(els.distressScale.value),
+    distressSeed: Number(els.distressSeed.value),
     dpi: preview ? outputDpi * state.previewScale : outputDpi,
   };
 }
@@ -91,6 +102,9 @@ function updateLabels() {
   els.screenSmoothOut.textContent = `${(Number(els.screenSmooth.value) / 10).toFixed(1)}px`;
   els.gammaOut.textContent = (Number(els.transitionGamma.value) / 100).toFixed(2);
   els.dpiOut.textContent = els.dpi.value;
+  els.distressAmountOut.textContent = `${els.distressAmount.value}%`;
+  els.distressScaleOut.textContent = els.distressScale.value;
+  els.distressSeedOut.textContent = els.distressSeed.value;
   els.chokeOut.textContent = `${els.choke.value}px`;
   updateFileMeta();
 }
@@ -185,9 +199,34 @@ function render() {
     );
 
     drawCurrentView();
+    updatePreflight();
     const ms = Math.round(performance.now() - t0);
     els.status.textContent = `${state.sourceCanvas.width}×${state.sourceCanvas.height}px · ${ms} ms · smooth ${(Number(els.screenSmooth.value) / 10).toFixed(1)}px · γ ${(Number(els.transitionGamma.value) / 100).toFixed(2)}`;
   });
+}
+
+function updatePreflight() {
+  if (!state.result || !state.image) return;
+  const pf = state.result.preflight;
+  const dpi = Math.max(1, Number(els.dpi.value));
+  const widthCm = (state.image.naturalWidth / dpi) * 2.54;
+  const heightCm = (state.image.naturalHeight / dpi) * 2.54;
+  const pitchMm = 25.4 / Math.max(1, Number(els.lpi.value));
+
+  els.preflightAlpha.textContent = pf.binaryAlpha ? 'PASS' : 'CHECK';
+  els.preflightAlpha.classList.toggle('status-pass', pf.binaryAlpha);
+  els.preflightAlpha.classList.toggle('status-warn', !pf.binaryAlpha);
+
+  els.preflightSourceAlpha.textContent = pf.sourceSemiPixels > 0
+    ? `${pf.sourceSemiPixels.toLocaleString()} semi`
+    : 'Clean';
+  els.preflightSourceAlpha.classList.toggle('status-warn', pf.sourceSemiPixels > 0);
+  els.preflightSourceAlpha.classList.toggle('status-pass', pf.sourceSemiPixels === 0);
+
+  els.preflightCoverage.textContent = `${pf.printCoverage.toFixed(1)}%`;
+  els.preflightReduction.textContent = `${pf.inkReduction.toFixed(1)}%`;
+  els.preflightPitch.textContent = `${pitchMm.toFixed(2)} mm`;
+  els.preflightSize.textContent = `${widthCm.toFixed(1)} × ${heightCm.toFixed(1)} cm`;
 }
 
 function updateStage() {
@@ -208,6 +247,7 @@ function drawCurrentView() {
   else if (state.view === 'background') ctx.putImageData(state.result.backgroundMap, 0, 0);
   else if (state.view === 'knockout') ctx.putImageData(state.result.knockoutMap, 0, 0);
   else if (state.view === 'mask') ctx.putImageData(state.result.mask, 0, 0);
+  else if (state.view === 'texture') ctx.putImageData(state.result.textureMap, 0, 0);
   else if (state.view === 'underbase' && state.underbase) ctx.putImageData(state.underbase, 0, 0);
   else ctx.putImageData(state.result.processed, 0, 0);
 
@@ -271,7 +311,7 @@ function exportPng() {
       ctx.clearRect(0, 0, width, height);
       ctx.putImageData(output, 0, 0);
       const dpi = Number(els.dpi.value);
-      await downloadCanvasPng(canvas, `${state.filename}-dtf-knockout-v031.png`, dpi);
+      await downloadCanvasPng(canvas, `${state.filename}-dtf-knockout-v04.png`, dpi);
       els.status.textContent = `Exported color ${width}×${height}px @ ${dpi} DPI${scale < 1 ? ' (6000px max side)' : ''}`;
     } catch (error) {
       console.error(error);
@@ -301,7 +341,7 @@ function exportUnderbase() {
       ctx.clearRect(0, 0, width, height);
       ctx.putImageData(underbase, 0, 0);
       const dpi = Number(els.dpi.value);
-      await downloadCanvasPng(canvas, `${state.filename}-white-underbase-v031.png`, dpi);
+      await downloadCanvasPng(canvas, `${state.filename}-white-underbase-v04.png`, dpi);
       els.status.textContent = `Exported underbase ${width}×${height}px @ ${dpi} DPI · pre-halftone choke ${els.choke.value}px${scale < 1 ? ' (6000px max side)' : ''}`;
     } catch (error) {
       console.error(error);
@@ -356,6 +396,10 @@ els.dropZone.addEventListener('drop', (e) => loadFile(e.dataTransfer.files?.[0])
   els.screenSmooth,
   els.transitionGamma,
   els.dpi,
+  els.distressStyle,
+  els.distressAmount,
+  els.distressScale,
+  els.distressSeed,
   els.choke,
 ].forEach((el) => el.addEventListener('input', render));
 
@@ -418,6 +462,10 @@ els.resetBtn.addEventListener('click', () => {
   els.screenSmooth.value = 10;
   els.transitionGamma.value = 100;
   els.dpi.value = 300;
+  els.distressStyle.value = 'none';
+  els.distressAmount.value = 0;
+  els.distressScale.value = 5;
+  els.distressSeed.value = 17;
   els.choke.value = 1;
   state.mode = 'halftone';
   document.querySelectorAll('.segment').forEach((b) => b.classList.toggle('active', b.dataset.mode === 'halftone'));

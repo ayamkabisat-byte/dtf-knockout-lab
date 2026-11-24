@@ -1,26 +1,63 @@
 # DTF Knockout Lab
 
-An original, browser-based DTF/DTG artwork preparation experiment focused on **garment-color knockout + binary halftone transparency**.
+An original, browser-based DTF/DTG artwork-preparation tool focused on **edge-aware background cleanup, garment-color knockout, binary halftone transparency, procedural distress, white underbase, and print preflight**.
 
-This project is inspired by general print-preparation techniques, not by copying proprietary source files or algorithms from any commercial product.
+The project is inspired by general print-preparation techniques. It does not copy proprietary source files, texture assets, or commercial algorithms.
 
-## v0.1 MVP
+## Current development version: v0.4
 
-- Upload PNG / JPG / WEBP
-- Select garment preview color
-- Select custom knockout color
-- Eyedropper sampling from artwork
-- Perceptual color matching in OKLab
-- Knockout tolerance and strength
-- Chroma protection to help preserve dark saturated colors during neutral-color knockout
-- Binary halftone transition (alpha = 0 or 255)
-- LPI 15–55
-- Angle 0–90°
-- Circle / Ellipse / Diamond / Square / Line patterns
+### Core knockout
+- PNG / JPG / WEBP input
+- Edge-connected background cleanup
+- Automatic edge background sampling
+- Independent internal knockout color and tolerance
+- OKLab perceptual matching
+- Chroma protection for dark saturated colors
+- Shadow recovery
+
+### Halftone
+- Binary final alpha: 0 or 255
+- 15–55 LPI
+- 0–90° angle
+- Circle / Ellipse / Diamond / Square / Line
+- Screen smoothing
+- Transition gamma
 - 150–600 DPI calculation basis
-- Original / Garment / Transparency / Mask views
-- Transparent PNG export
-- Processing happens client-side in the browser
+- DPI metadata embedded in exported PNG
+
+### Texture / distress
+- Original procedural Fine Grain
+- Coarse Speckle
+- Scratches
+- Vintage Mix
+- Amount / scale / deterministic seed controls
+- Distress is applied to coverage before final halftone rasterization
+
+### White underbase
+- Separate underbase preview and PNG export
+- 0–3 px choke
+- Choke is applied before halftone rasterization so small dots survive
+
+### Print preflight
+- Final binary-alpha PASS/CHECK
+- Source semi-transparent pixel warning
+- Current print coverage
+- Estimated ink-area reduction
+- Halftone physical pitch
+- Physical print size at selected DPI
+
+### Preview / export
+- Original
+- Garment
+- Transparency
+- Background mask
+- Internal knockout mask
+- Final mask
+- Texture mask
+- Underbase
+- Color PNG export
+- Underbase PNG export
+- Processing remains client-side
 
 ## Run locally
 
@@ -31,38 +68,28 @@ npm run dev
 
 ## Deploy to Vercel
 
-1. Push this project to a GitHub repository.
-2. In Vercel choose **Add New → Project**.
-3. Import the GitHub repository.
-4. Vercel should detect **Vite** automatically.
-5. Deploy. No environment variables are required for v0.1.
+Import this GitHub repository as a Vite project. No environment variables are required.
 
 ## Architecture
 
-- `src/engine.js` — pure image processing / knockout / halftone logic
-- `src/app.js` — UI state, file handling, preview and export
-- `src/styles.css` — UI
+- `src/engine.js` — knockout, halftone, distress and preflight image-processing logic
+- `src/underbase.js` — pre-halftone white-underbase choke and rasterization
+- `src/png.js` — PNG DPI metadata injection
+- `src/app.js` — UI state, preview and export
+- `src/styles.css` — interface styling
 
-Keeping the engine separate is intentional so it can later move into a Web Worker, WebGL/WASM implementation, or be reused by a Photoshop companion/plugin.
+The engine remains separate so it can later move to Web Worker / OffscreenCanvas / WebGL/WASM or be reused by a Photoshop companion.
 
-## Known v0.1 limitations
+## Next candidates
 
-- Interactive preview is capped to 2600 px on the longest side for responsiveness. Export re-renders from the original image up to 6000 px on the longest side; v0.2 should move this work to a Web Worker/OffscreenCanvas for smoother large-image export.
-- PNG metadata does not currently embed a physical DPI chunk; DPI is currently the halftone calculation basis.
-- No white-underbase generation/choke yet.
-- No project save/load yet.
-- No batch processing yet.
-
-## Proposed v0.2
-
-- Full-resolution export in Web Worker / OffscreenCanvas
-- White-underbase mask + choke
-- Shadow recovery / highlight protection
-- More robust chroma/hue protection
-- Before/after split slider
-- Presets for black, white and colored garments
-- Saved `.dtfk` project settings
-- Ink coverage estimate
+- Print-size input with safe resize before halftone
+- Quick print presets
+- Custom user texture upload
+- Before/after split preview
+- Save/load project settings
+- Multi-garment variant export
+- Batch processing / gang-sheet handoff
+- Web Worker full-resolution processing
 
 ## License
 

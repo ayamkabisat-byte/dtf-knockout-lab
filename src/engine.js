@@ -323,6 +323,80 @@ function refineCoverageMap(coverage, width, height, settings) {
   return output;
 }
 
+function hash01(x, y, seed) {
+  let n = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed | 0, 69069)) | 0;
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+}
+
+function applyDistress(coverage, width, height, settings) {
+  const style = settings.distressStyle || 'none';
+  const amount = clamp((Number(settings.distressAmount) || 0) / 100);
+  const scale = Math.max(1, Number(settings.distressScale) || 5);
+  const seed = Math.max(1, Number(settings.distressSeed) || 17) | 0;
+  const mask = new Uint8Array(coverage.length);
+
+  if (style === 'none' || amount <= 0) {
+    return { coverage, textureMask: mask };
+  }
+
+  const output = new Uint8Array(coverage);
+  // Tie procedural feature size to effective DPI. Preview already uses a
+  // downscaled effective DPI, so texture size remains physically consistent
+  // with full-resolution export.
+  const dpiScale = Math.max(0.2, (Number(settings.dpi) || 300) / 300);
+  const grainCell = Math.max(1, Math.round((0.65 + scale * 0.12) * dpiScale));
+  const coarseCell = Math.max(3, Math.round((3 + scale * 1.7) * dpiScale));
+  const scratchGap = Math.max(8, Math.round((18 + scale * 4) * dpiScale));
+  const scratchWidth = Math.max(1, Math.round(scale * 0.25 * dpiScale));
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = y * width + x;
+      if (output[p] === 0) continue;
+      let cut = false;
+
+      if (style === 'fine' || style === 'vintage') {
+        const threshold = style === 'fine' ? amount * 0.34 : amount * 0.18;
+        const gx = Math.floor(x / grainCell);
+        const gy = Math.floor(y / grainCell);
+        cut ||= hash01(gx, gy, seed) < threshold;
+      }
+
+      if (style === 'coarse' || style === 'vintage') {
+        const cx = Math.floor(x / coarseCell);
+        const cy = Math.floor(y / coarseCell);
+        const active = hash01(cx, cy, seed + 11);
+        const localX = (x % coarseCell) / coarseCell;
+        const localY = (y % coarseCell) / coarseCell;
+        const centerX = 0.25 + hash01(cx, cy, seed + 23) * 0.5;
+        const centerY = 0.25 + hash01(cx, cy, seed + 37) * 0.5;
+        const dx = localX - centerX;
+        const dy = localY - centerY;
+        const radius = 0.12 + hash01(cx, cy, seed + 41) * 0.28;
+        const threshold = style === 'coarse' ? amount * 0.95 : amount * 0.55;
+        cut ||= active < threshold && (dx * dx + dy * dy) < radius * radius;
+      }
+
+      if (style === 'scratches' || style === 'vintage') {
+        const diag = x + y * 2 + seed * 7;
+        const lineIndex = Math.floor(diag / scratchGap);
+        const linePos = ((diag % scratchGap) + scratchGap) % scratchGap;
+        const active = hash01(lineIndex, Math.floor(y / scratchGap), seed + 71);
+        const threshold = style === 'scratches' ? amount * 0.9 : amount * 0.45;
+        cut ||= linePos < scratchWidth && active < threshold;
+      }
+
+      if (cut) {
+        output[p] = 0;
+        mask[p] = 255;
+      }
+    }
+  }
+
+  return { coverage: output, textureMask: mask };
+}
+
 function processCoverage(source, width, height, settings) {
   const total = width * height;
   const data = source.data;
@@ -343,8 +417,9 @@ function processCoverage(source, width, height, settings) {
     internalMatch[p] = Math.round(result.match * 255);
   }
 
-  const coverage = refineCoverageMap(rawCoverage, width, height, settings);
-  return { coverage, rawCoverage, internalMatch, background };
+  const refinedCoverage = refineCoverageMap(rawCoverage, width, height, settings);
+  const { coverage, textureMask } = applyDistress(refinedCoverage, width, height, settings);
+  return { coverage, rawCoverage, internalMatch, background, textureMask };
 }
 
 function renderColorFromCoverage(source, coverage, width, height, settings) {
@@ -387,16 +462,27 @@ export function rasterizeCoverageMask(coverage, width, height, settings) {
 
 export function processImageData(source, width, height, settings) {
   const total = width * height;
-  const { coverage, rawCoverage, internalMatch, background } = processCoverage(source, width, height, settings);
+  const { coverage, rawCoverage, internalMatch, background, textureMask } = processCoverage(source, width, height, settings);
   const processed = renderColorFromCoverage(source, coverage, width, height, settings);
   const mask = new Uint8ClampedArray(total * 4);
   const knockoutMap = new Uint8ClampedArray(total * 4);
   const backgroundMap = new Uint8ClampedArray(total * 4);
+  const textureMap = new Uint8ClampedArray(total * 4);
   const coverageMap = new Uint8ClampedArray(total * 4);
   const original = new Uint8ClampedArray(source.data);
+  let printedPixels = 0;
+  let finalSemiPixels = 0;
+  let sourceSupportPixels = 0;
+  let sourceSemiPixels = 0;
 
   for (let p = 0, i = 0; p < total; p++, i += 4) {
     const alpha = processed.data[i + 3];
+    if (alpha === 255) printedPixels++;
+    else if (alpha !== 0) finalSemiPixels++;
+    const sourceAlpha = source.data[i + 3];
+    if (sourceAlpha > 0) sourceSupportPixels++;
+    if (sourceAlpha > 0 && sourceAlpha < 255) sourceSemiPixels++;
+
     mask[i] = alpha;
     mask[i + 1] = alpha;
     mask[i + 2] = alpha;
@@ -414,7 +500,13 @@ export function processImageData(source, width, height, settings) {
     backgroundMap[i + 2] = bg;
     backgroundMap[i + 3] = 255;
 
-    const cov = coverage[p] || rawCoverage[p];
+    const tex = textureMask[p] || 0;
+    textureMap[i] = tex;
+    textureMap[i + 1] = tex;
+    textureMap[i + 2] = tex;
+    textureMap[i + 3] = 255;
+
+    const cov = coverage[p];
     coverageMap[i] = cov;
     coverageMap[i + 1] = cov;
     coverageMap[i + 2] = cov;
@@ -426,8 +518,18 @@ export function processImageData(source, width, height, settings) {
     mask: new ImageData(mask, width, height),
     knockoutMap: new ImageData(knockoutMap, width, height),
     backgroundMap: new ImageData(backgroundMap, width, height),
+    textureMap: new ImageData(textureMap, width, height),
     coverageMap: new ImageData(coverageMap, width, height),
     coverage,
+    preflight: {
+      binaryAlpha: finalSemiPixels === 0,
+      finalSemiPixels,
+      sourceSemiPixels,
+      printCoverage: total ? (printedPixels / total) * 100 : 0,
+      inkReduction: sourceSupportPixels
+        ? Math.max(0, Math.min(100, (1 - printedPixels / sourceSupportPixels) * 100))
+        : 0,
+    },
     original: new ImageData(original, width, height),
   };
 }
