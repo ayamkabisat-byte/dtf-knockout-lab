@@ -341,9 +341,14 @@ function applyDistress(coverage, width, height, settings) {
   }
 
   const output = new Uint8Array(coverage);
-  const coarseCell = Math.max(3, Math.round(3 + scale * 1.7));
-  const scratchGap = Math.max(10, Math.round(18 + scale * 4));
-  const scratchWidth = Math.max(1, Math.round(scale * 0.25));
+  // Tie procedural feature size to effective DPI. Preview already uses a
+  // downscaled effective DPI, so texture size remains physically consistent
+  // with full-resolution export.
+  const dpiScale = Math.max(0.2, (Number(settings.dpi) || 300) / 300);
+  const grainCell = Math.max(1, Math.round((0.65 + scale * 0.12) * dpiScale));
+  const coarseCell = Math.max(3, Math.round((3 + scale * 1.7) * dpiScale));
+  const scratchGap = Math.max(8, Math.round((18 + scale * 4) * dpiScale));
+  const scratchWidth = Math.max(1, Math.round(scale * 0.25 * dpiScale));
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -353,7 +358,9 @@ function applyDistress(coverage, width, height, settings) {
 
       if (style === 'fine' || style === 'vintage') {
         const threshold = style === 'fine' ? amount * 0.34 : amount * 0.18;
-        cut ||= hash01(x, y, seed) < threshold;
+        const gx = Math.floor(x / grainCell);
+        const gy = Math.floor(y / grainCell);
+        cut ||= hash01(gx, gy, seed) < threshold;
       }
 
       if (style === 'coarse' || style === 'vintage') {
@@ -499,7 +506,7 @@ export function processImageData(source, width, height, settings) {
     textureMap[i + 2] = tex;
     textureMap[i + 3] = 255;
 
-    const cov = coverage[p] || rawCoverage[p];
+    const cov = coverage[p];
     coverageMap[i] = cov;
     coverageMap[i + 1] = cov;
     coverageMap[i + 2] = cov;
